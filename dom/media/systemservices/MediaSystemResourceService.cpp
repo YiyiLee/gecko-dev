@@ -141,6 +141,25 @@ MediaSystemResourceService::ReleaseResource(media::MediaSystemResourceManagerPar
   UpdateRequests(aResourceType);
 }
 
+struct ReleaseResourceData
+{
+  MediaSystemResourceService* mSelf;
+  media::MediaSystemResourceManagerParent* mParent;
+};
+
+/*static*/PLDHashOperator
+MediaSystemResourceService::ReleaseResourceForKey(const uint32_t& aKey,
+                                                  nsAutoPtr<MediaSystemResource>& aData,
+                                                  void* aClosure)
+{
+  ReleaseResourceData* closure = static_cast<ReleaseResourceData*>(aClosure);
+
+  closure->mSelf->RemoveRequests(closure->mParent, static_cast<MediaSystemResourceType>(aKey));
+  closure->mSelf->UpdateRequests(static_cast<MediaSystemResourceType>(aKey));
+
+  return PLDHashOperator::PL_DHASH_NEXT;
+}
+
 void
 MediaSystemResourceService::ReleaseResource(media::MediaSystemResourceManagerParent* aParent)
 {
@@ -150,11 +169,8 @@ MediaSystemResourceService::ReleaseResource(media::MediaSystemResourceManagerPar
     return;
   }
 
-  for (auto iter = mResources.Iter(); !iter.Done(); iter.Next()) {
-    const uint32_t& key = iter.Key();
-    RemoveRequests(aParent, static_cast<MediaSystemResourceType>(key));
-    UpdateRequests(static_cast<MediaSystemResourceType>(key));
-  }
+  ReleaseResourceData data = { this, aParent };
+  mResources.Enumerate(ReleaseResourceForKey, &data);
 }
 
 void

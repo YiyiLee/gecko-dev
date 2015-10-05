@@ -399,6 +399,11 @@ private:
   void WaitFenceAndReleaseOutputBuffer();
 
   void ReleaseRecycledTextureClients();
+  static PLDHashOperator ReleaseTextureClient(TextureClient* aClient,
+                                              size_t& aIndex,
+                                              void* aUserArg);
+  PLDHashOperator ReleaseTextureClient(TextureClient* aClient,
+                                       size_t& aIndex);
 
   void ReleaseAllTextureClients();
 

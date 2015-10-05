@@ -19,6 +19,15 @@ namespace mozilla {
 
 typedef MozPromiseRequestHolder<CDMProxy::DecryptPromise> DecryptPromiseRequestHolder;
 
+static PLDHashOperator
+DropDecryptPromises(MediaRawData* aKey,
+                    nsAutoPtr<DecryptPromiseRequestHolder>& aData,
+                    void* aUserArg)
+{
+  aData->DisconnectIfExists();
+  return PL_DHASH_REMOVE;
+}
+
 class EMEDecryptor : public MediaDataDecoder {
 
 public:
@@ -98,11 +107,7 @@ public:
   nsresult Flush() override {
     MOZ_ASSERT(mTaskQueue->IsCurrentThreadIn());
     MOZ_ASSERT(!mIsShutdown);
-    for (auto iter = mDecrypts.Iter(); !iter.Done(); iter.Next()) {
-      nsAutoPtr<DecryptPromiseRequestHolder>& holder = iter.Data();
-      holder->DisconnectIfExists();
-      iter.Remove();
-    }
+    mDecrypts.Enumerate(&DropDecryptPromises, nullptr);
     nsresult rv = mDecoder->Flush();
     unused << NS_WARN_IF(NS_FAILED(rv));
     mSamplesWaitingForKey->Flush();
@@ -112,11 +117,7 @@ public:
   nsresult Drain() override {
     MOZ_ASSERT(mTaskQueue->IsCurrentThreadIn());
     MOZ_ASSERT(!mIsShutdown);
-    for (auto iter = mDecrypts.Iter(); !iter.Done(); iter.Next()) {
-      nsAutoPtr<DecryptPromiseRequestHolder>& holder = iter.Data();
-      holder->DisconnectIfExists();
-      iter.Remove();
-    }
+    mDecrypts.Enumerate(&DropDecryptPromises, nullptr);
     nsresult rv = mDecoder->Drain();
     unused << NS_WARN_IF(NS_FAILED(rv));
     return rv;

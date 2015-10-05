@@ -848,6 +848,32 @@ MediaCodecReader::WaitFenceAndReleaseOutputBuffer()
   }
 }
 
+PLDHashOperator
+MediaCodecReader::ReleaseTextureClient(TextureClient* aClient,
+                                       size_t& aIndex,
+                                       void* aUserArg)
+{
+  nsRefPtr<MediaCodecReader> reader = static_cast<MediaCodecReader*>(aUserArg);
+  MOZ_ASSERT(reader, "reader should not be nullptr in ReleaseTextureClient()");
+
+  return reader->ReleaseTextureClient(aClient, aIndex);
+}
+
+PLDHashOperator
+MediaCodecReader::ReleaseTextureClient(TextureClient* aClient,
+                                       size_t& aIndex)
+{
+  MOZ_ASSERT(aClient, "TextureClient should be a valid pointer");
+
+  aClient->ClearRecycleCallback();
+
+  if (mVideoTrack.mCodec != nullptr) {
+    mVideoTrack.mCodec->releaseOutputBuffer(aIndex);
+  }
+
+  return PL_DHASH_REMOVE;
+}
+
 void
 MediaCodecReader::ReleaseAllTextureClients()
 {
@@ -859,17 +885,7 @@ MediaCodecReader::ReleaseAllTextureClients()
   }
   printf_stderr("All TextureClients should be released already");
 
-  for (auto iter = mTextureClientIndexes.Iter(); !iter.Done(); iter.Next()) {
-    TextureClient* client = iter.Key();
-    size_t& index = iter.Data();
-
-    client->ClearRecycleCallback();
-
-    if (mVideoTrack.mCodec != nullptr) {
-      mVideoTrack.mCodec->releaseOutputBuffer(index);
-    }
-    iter.Remove();
-  }
+  mTextureClientIndexes.Enumerate(MediaCodecReader::ReleaseTextureClient, this);
   mTextureClientIndexes.Clear();
 }
 
