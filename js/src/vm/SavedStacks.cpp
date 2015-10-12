@@ -6,6 +6,7 @@
 
 #include "vm/SavedStacks.h"
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Move.h"
@@ -206,7 +207,7 @@ class MOZ_STACK_CLASS SavedFrame::AutoLookupVector : public JS::CustomAutoRooter
         lookups(cx)
     { }
 
-    typedef Vector<Lookup, 20> LookupVector;
+    typedef Vector<Lookup, ASYNC_STACK_MAX_FRAME_COUNT> LookupVector;
     inline LookupVector* operator->() { return &lookups; }
     inline HandleLookup operator[](size_t i) { return HandleLookup(lookups[i]); }
 
@@ -904,6 +905,10 @@ SavedFrame::toStringMethod(JSContext* cx, unsigned argc, Value* vp)
 bool
 SavedStacks::init()
 {
+    uint64_t seed[2];
+    random_generateSeed(seed, mozilla::ArrayLength(seed));
+    bernoulli.setRandomState(seed[0], seed[1]);
+
     if (!pcLocationMap.init())
         return false;
 
@@ -1141,29 +1146,50 @@ SavedStacks::adoptAsyncStack(JSContext* cx, HandleSavedFrame asyncStack,
     // stack frames, but async stacks are not limited by the available stack
     // memory, so we need to set an arbitrary limit when collecting them. We
     // still don't enforce an upper limit if the caller requested more frames.
-    if (maxFrameCount == 0)
-        maxFrameCount = ASYNC_STACK_MAX_FRAME_COUNT;
+    unsigned maxFrames = maxFrameCount > 0 ? maxFrameCount : ASYNC_STACK_MAX_FRAME_COUNT;
 
     // Accumulate the vector of Lookup objects in |stackChain|.
     SavedFrame::AutoLookupVector stackChain(cx);
     SavedFrame* currentSavedFrame = asyncStack;
-    for (unsigned i = 0; i < maxFrameCount && currentSavedFrame; i++) {
+    SavedFrame* firstSavedFrameParent = nullptr;
+    for (unsigned i = 0; i < maxFrames && currentSavedFrame; i++) {
         if (!stackChain->emplaceBack(*currentSavedFrame)) {
             ReportOutOfMemory(cx);
             return false;
         }
 
-        // Attach the asyncCause to the youngest frame.
-        if (i == 0)
-            stackChain->back().asyncCause = asyncCauseAtom;
-
         currentSavedFrame = currentSavedFrame->getParent();
+
+        // Attach the asyncCause to the youngest frame.
+        if (i == 0) {
+            stackChain->back().asyncCause = asyncCauseAtom;
+            firstSavedFrameParent = currentSavedFrame;
+        }
+    }
+
+    // This is the 1-based index of the oldest frame we care about.
+    size_t oldestFramePosition = stackChain->length();
+    RootedSavedFrame parentFrame(cx, nullptr);
+
+    if (currentSavedFrame == nullptr &&
+        asyncStack->compartment() == cx->compartment()) {
+        // If we consumed the full async stack, and the stack is in the same
+        // compartment as the one requested, we don't need to rebuild the full
+        // chain again using the lookup objects, we can just reference the
+        // existing chain and change the asyncCause on the younger frame.
+        oldestFramePosition = 1;
+        parentFrame = firstSavedFrameParent;
+    } else if (maxFrameCount == 0 &&
+               oldestFramePosition == ASYNC_STACK_MAX_FRAME_COUNT) {
+        // If we captured the maximum number of frames and the caller requested
+        // no specific limit, we only return half of them. This means that for
+        // the next iterations, it's likely we can use the optimization above.
+        oldestFramePosition = ASYNC_STACK_MAX_FRAME_COUNT / 2;
     }
 
     // Iterate through |stackChain| in reverse order and get or create the
     // actual SavedFrame instances.
-    RootedSavedFrame parentFrame(cx, nullptr);
-    for (size_t i = stackChain->length(); i != 0; i--) {
+    for (size_t i = oldestFramePosition; i != 0; i--) {
         SavedFrame::HandleLookup lookup = stackChain[i-1];
         lookup->parent = parentFrame;
         parentFrame.set(getOrCreateSavedFrame(cx, lookup));
@@ -1305,16 +1331,20 @@ SavedStacks::getLocation(JSContext* cx, const FrameIter& iter, MutableHandleLoca
 }
 
 void
-SavedStacks::chooseSamplingProbability(JSContext* cx)
+SavedStacks::chooseSamplingProbability(JSCompartment* compartment)
 {
-    GlobalObject::DebuggerVector* dbgs = cx->global()->getDebuggers();
+    GlobalObject* global = compartment->maybeGlobal();
+    if (!global)
+        return;
+
+    GlobalObject::DebuggerVector* dbgs = global->getDebuggers();
     if (!dbgs || dbgs->empty())
         return;
 
     mozilla::DebugOnly<Debugger**> begin = dbgs->begin();
     mozilla::DebugOnly<bool> foundAnyDebuggers = false;
 
-    allocationSamplingProbability = 0;
+    double probability = 0;
     for (Debugger** dbgp = dbgs->begin(); dbgp < dbgs->end(); dbgp++) {
         // The set of debuggers had better not change while we're iterating,
         // such that the vector gets reallocated.
@@ -1322,11 +1352,13 @@ SavedStacks::chooseSamplingProbability(JSContext* cx)
 
         if ((*dbgp)->trackingAllocationSites && (*dbgp)->enabled) {
             foundAnyDebuggers = true;
-            allocationSamplingProbability = std::max((*dbgp)->allocationSamplingProbability,
-                                                     allocationSamplingProbability);
+            probability = std::max((*dbgp)->allocationSamplingProbability,
+                                   probability);
         }
     }
     MOZ_ASSERT(foundAnyDebuggers);
+
+    bernoulli.setProbability(probability);
 }
 
 JSObject*
@@ -1335,39 +1367,8 @@ SavedStacksMetadataCallback(JSContext* cx, JSObject* target)
     RootedObject obj(cx, target);
 
     SavedStacks& stacks = cx->compartment()->savedStacks();
-    if (stacks.allocationSkipCount > 0) {
-        stacks.allocationSkipCount--;
+    if (!stacks.bernoulli.trial())
         return nullptr;
-    }
-
-    stacks.chooseSamplingProbability(cx);
-    if (stacks.allocationSamplingProbability == 0.0)
-        return nullptr;
-
-    // If the sampling probability is set to 1.0, we are always taking a sample
-    // and can therefore leave allocationSkipCount at 0.
-    if (stacks.allocationSamplingProbability != 1.0) {
-        // Rather than generating a random number on every allocation to decide
-        // if we want to sample that particular allocation (which would be
-        // expensive), we calculate the number of allocations to skip before
-        // taking the next sample.
-        //
-        // P = the probability we sample any given event.
-        //
-        // ~P = 1-P, the probability we don't sample a given event.
-        //
-        // (~P)^n = the probability that we skip at least the next n events.
-        //
-        // let X = random between 0 and 1.
-        //
-        // floor(log base ~P of X) = n, aka the number of events we should skip
-        // until we take the next sample. Any value for X less than (~P)^n
-        // yields a skip count greater than n, so the likelihood of a skip count
-        // greater than n is (~P)^n, as required.
-        double notSamplingProb = 1.0 - stacks.allocationSamplingProbability;
-        stacks.allocationSkipCount = std::floor(std::log(random_nextDouble(&stacks.rngState)) /
-                                                std::log(notSamplingProb));
-    }
 
     AutoEnterOOMUnsafeRegion oomUnsafe;
     RootedSavedFrame frame(cx);

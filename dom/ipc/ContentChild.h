@@ -130,7 +130,7 @@ public:
     AllocPProcessHangMonitorChild(Transport* aTransport,
                                   ProcessId aOtherProcess) override;
 
-    virtual bool RecvSetProcessSandbox() override;
+    virtual bool RecvSetProcessSandbox(const MaybeFileDesc& aBroker) override;
 
     PBackgroundChild*
     AllocPBackgroundChild(Transport* aTransport, ProcessId aOtherProcess)
@@ -459,6 +459,7 @@ public:
     virtual POfflineCacheUpdateChild* AllocPOfflineCacheUpdateChild(
             const URIParams& manifestURI,
             const URIParams& documentURI,
+            const PrincipalInfo& aLoadingPrincipalInfo,
             const bool& stickDocument,
             const TabId& aTabId) override;
     virtual bool

@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const Cu = Components.utils;
+var Cu = Components.utils;
 const {Services} = Cu.import("resource://gre/modules/Services.jsm");
 const {require} = Cu.import("resource://gre/modules/devtools/shared/Loader.jsm", {});
 const {AppManager} = require("devtools/client/webide/modules/app-manager");
@@ -10,7 +10,7 @@ const {Connection} = require("devtools/shared/client/connection-manager");
 const {RuntimeTypes} = require("devtools/client/webide/modules/runtimes");
 const Strings = Services.strings.createBundle("chrome://browser/locale/devtools/webide.properties");
 
-const UNRESTRICTED_HELP_URL = "https://developer.mozilla.org/docs/Tools/WebIDE#Unrestricted_app_debugging_%28including_certified_apps.2C_main_process.2C_etc.%29";
+const UNRESTRICTED_HELP_URL = "https://developer.mozilla.org/docs/Tools/WebIDE/Running_and_debugging_apps#Unrestricted_app_debugging_%28including_certified_apps_main_process_etc.%29";
 
 window.addEventListener("load", function onLoad() {
   window.removeEventListener("load", onLoad);

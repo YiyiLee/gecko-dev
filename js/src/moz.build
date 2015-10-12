@@ -11,6 +11,8 @@ component_intl   = ('Core', 'JavaScript: Internationalization API')
 component_jit    = ('Core', 'JavaScript Engine: JIT')
 component_stl    = ('Core', 'JavaScript: Standard Library')
 
+FILES_PER_UNIFIED_FILE = 6
+
 with Files('../public/**'):
     BUG_COMPONENT = component_engine
 with Files('*'):
@@ -288,6 +290,7 @@ UNIFIED_SOURCES += [
     'vm/ArrayBufferObject.cpp',
     'vm/CallNonGenericMethod.cpp',
     'vm/CharacterEncoding.cpp',
+    'vm/CodeCoverage.cpp',
     'vm/Compression.cpp',
     'vm/DateTime.cpp',
     'vm/Debugger.cpp',

@@ -200,10 +200,10 @@ DecoderTraits::IsWebMType(const nsACString& aType)
 static bool
 IsGStreamerSupportedType(const nsACString& aMimeType)
 {
-  if (!MediaDecoder::IsGStreamerEnabled())
+  if (DecoderTraits::IsWebMType(aMimeType))
     return false;
 
-  if (DecoderTraits::IsWebMType(aMimeType) && !Preferences::GetBool("media.prefer-gstreamer", false))
+  if (!MediaDecoder::IsGStreamerEnabled())
     return false;
 
   if (IsOggType(aMimeType) && !Preferences::GetBool("media.prefer-gstreamer", false))
@@ -347,9 +347,7 @@ static bool
 IsMP4SupportedType(const nsACString& aType,
                    const nsAString& aCodecs = EmptyString())
 {
-  // MP4Decoder/Reader is currently used for MSE and mp4 files local playback.
-  bool haveAAC, haveMP3, haveH264;
-  return MP4Decoder::CanHandleMediaType(aType, aCodecs, haveAAC, haveH264, haveMP3);
+  return MP4Decoder::CanHandleMediaType(aType, aCodecs);
 }
 #endif
 
@@ -366,7 +364,7 @@ static bool
 IsMP3SupportedType(const nsACString& aType,
                    const nsAString& aCodecs = EmptyString())
 {
-  return aType.EqualsASCII("audio/mpeg") && MP3Decoder::IsEnabled();
+  return MP3Decoder::CanHandleMediaType(aType, aCodecs);
 }
 
 #ifdef MOZ_APPLEMEDIA

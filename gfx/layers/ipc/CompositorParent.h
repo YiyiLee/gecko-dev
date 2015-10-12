@@ -381,6 +381,20 @@ public:
    */
   static LayerTreeState* GetIndirectShadowTree(uint64_t aId);
 
+#if defined(XP_WIN) || defined(MOZ_WIDGET_GTK)
+  /**
+   * Calculates and requests the main thread update plugin positioning, clip,
+   * and visibility via ipc.
+   */
+  bool UpdatePluginWindowState(uint64_t aId);
+#endif
+
+  /**
+   * Main thread response for a plugin visibility request made by the
+   * compositor thread.
+   */
+  virtual bool RecvRemotePluginsReady() override;
+
   /**
    * Used by the profiler to denote when a vsync occured
    */
@@ -460,7 +474,7 @@ protected:
   mozilla::Monitor mResumeCompositionMonitor;
 
   uint64_t mCompositorID;
-  uint64_t mRootLayerTreeID;
+  const uint64_t mRootLayerTreeID;
 
   bool mOverrideComposeReadiness;
   CancelableTask* mForceCompositionTask;
@@ -469,6 +483,19 @@ protected:
 
   nsRefPtr<CompositorThreadHolder> mCompositorThreadHolder;
   nsRefPtr<CompositorVsyncScheduler> mCompositorScheduler;
+
+#if defined(XP_WIN) || defined(MOZ_WIDGET_GTK)
+  // cached plugin data used to reduce the number of updates we request.
+  uint64_t mLastPluginUpdateLayerTreeId;
+  nsIntPoint mPluginsLayerOffset;
+  nsIntRegion mPluginsLayerVisibleRegion;
+  nsTArray<PluginWindowData> mCachedPluginData;
+#endif
+#if defined(XP_WIN)
+  // indicates if we are currently waiting on a plugin update confirmation.
+  // When this is true, composition is currently on hold.
+  bool mPluginUpdateResponsePending;
+#endif
 
   DISALLOW_EVIL_CONSTRUCTORS(CompositorParent);
 };

@@ -214,15 +214,9 @@
      *   Stack: v1, v2 => v1, v2, v1, v2
      */ \
     macro(JSOP_DUP2,      13, "dup2",       NULL,         1,  2,  4, JOF_BYTE) \
-    /*
-     * Defines a readonly property on the frame's current variables-object (the
-     * scope object on the scope chain designated to receive new variables).
-     *   Category: Variables and Scopes
-     *   Type: Variables
-     *   Operands: uint32_t nameIndex
-     *   Stack: val => val
-     */ \
-    macro(JSOP_SETCONST,  14, "setconst",   NULL,         5,  1,  1, JOF_ATOM|JOF_NAME|JOF_SET) \
+    \
+    macro(JSOP_UNUSED14,  14, "unused14",   NULL,         1,  0,  0, JOF_BYTE) \
+    \
     /*
      * Pops the top two values 'lval' and 'rval' from the stack, then pushes
      * the result of the operation applied to the two operands, converting
@@ -1295,14 +1289,10 @@
      *   Stack: =>
      */ \
     macro(JSOP_DEFFUN,    127,"deffun",     NULL,         5,  0,  0,  JOF_OBJECT) \
-    /*
-     * Defines the new binding on the frame's current variables-object (the
-     * scope object on the scope chain designated to receive new variables) with
-     * 'READONLY' attribute. The binding is *not* JSPROP_PERMANENT. See bug
-     * 1019181 for the reason.
+    /* Defines the new constant binding on global lexical scope.
      *
-     * This is used for global scripts and also in some cases for function
-     * scripts where use of dynamic scoping inhibits optimization.
+     * Throws if a binding with the same name already exists on the scope, or
+     * if a var binding with the same name exists on the global.
      *   Category: Variables and Scopes
      *   Type: Variables
      *   Operands: uint32_t nameIndex
@@ -1312,6 +1302,9 @@
     /*
      * Defines the new binding on the frame's current variables-object (the
      * scope object on the scope chain designated to receive new variables).
+     *
+     * Throws if the current variables-object is the global object and a
+     * binding with the same name exists on the global lexical scope.
      *
      * This is used for global scripts and also in some cases for function
      * scripts where use of dynamic scoping inhibits optimization.
@@ -1655,12 +1648,66 @@
      */ \
     macro(JSOP_REGEXP,        160,"regexp",   NULL,       5,  0,  1, JOF_REGEXP) \
     \
-    macro(JSOP_UNUSED161,     161,"unused161",  NULL,     1,  0,  0,  JOF_BYTE) \
-    macro(JSOP_UNUSED162,     162,"unused162",  NULL,     1,  0,  0,  JOF_BYTE) \
-    macro(JSOP_UNUSED163,     163,"unused163",  NULL,     1,  0,  0,  JOF_BYTE) \
-    macro(JSOP_UNUSED164,     164,"unused164",  NULL,     1,  0,  0,  JOF_BYTE) \
-    macro(JSOP_UNUSED165,     165,"unused165",  NULL,     1,  0,  0,  JOF_BYTE) \
-    macro(JSOP_UNUSED166,     166,"unused166",  NULL,     1,  0,  0,  JOF_BYTE) \
+    /*
+     * Initializes an uninitialized global lexical binding with the top of
+     * stack value.
+     *   Category: Variables and Scopes
+     *   Type: Free Variables
+     *   Operands: uint32_t nameIndex
+     *   Stack: val => val
+     */ \
+    macro(JSOP_INITGLEXICAL,  161,"initglexical", NULL,   5,  1,  1,  JOF_ATOM|JOF_NAME|JOF_SET|JOF_GNAME) \
+    \
+    /* Defines the new mutable binding on global lexical scope.
+     *
+     * Throws if a binding with the same name already exists on the scope, or
+     * if a var binding with the same name exists on the global.
+     *   Category: Variables and Scopes
+     *   Type: Variables
+     *   Operands: uint32_t nameIndex
+     *   Stack: =>
+     */ \
+    macro(JSOP_DEFLET,        162,"deflet",     NULL,     5,  0,  0,  JOF_ATOM) \
+    \
+    /*
+     * Bind the |this| value of a function to the supplied value.
+     *
+     *  Category: Variables and Scopes
+     *  Type: This
+     *  Operands:
+     *  Stack: this => this
+     */ \
+    macro(JSOP_SETTHIS  ,     163,"setthis",    NULL,     1,  1,  1,  JOF_BYTE) \
+    /*
+     * Find the function to invoke with |super()| on the scope chain.
+     *
+     *  Category: Variables and Scopes
+     *  Type: Super
+     *  Operands:
+     *  Stack: => superFun
+     */ \
+    macro(JSOP_SUPERFUN,      164,"superfun",   NULL,     1,  0,  1,  JOF_BYTE) \
+    /*
+     * Behaves exactly like JSOP_NEW, but allows JITs to distinguish the two cases.
+     *
+     *   Category: Statements
+     *   Type: Function
+     *   Operands: uint16_t argc
+     *   Stack: callee, this, args[0], ..., args[argc-1], newTarget => rval
+     *   nuses: (argc+3)
+     */ \
+    macro(JSOP_SUPERCALL,     165,"supercall",  NULL,     3, -1,  1,  JOF_UINT16|JOF_INVOKE|JOF_TYPESET) \
+    /*
+     * spreadcall variant of JSOP_SUPERCALL.
+     *
+     * Behaves exactly like JSOP_SPREADNEW.
+     *
+     *   Category: Statements
+     *   Type: Function
+     *   Operands:
+     *   Stack: callee, this, args, newTarget => rval
+     */ \
+    macro(JSOP_SPREADSUPERCALL, 166, "spreadsupercall", NULL, 1,  4,  1, JOF_BYTE|JOF_INVOKE|JOF_TYPESET) \
     macro(JSOP_UNUSED167,     167,"unused167",  NULL,     1,  0,  0,  JOF_BYTE) \
     macro(JSOP_UNUSED168,     168,"unused168",  NULL,     1,  0,  0,  JOF_BYTE) \
     macro(JSOP_UNUSED169,     169,"unused169",  NULL,     1,  0,  0,  JOF_BYTE) \

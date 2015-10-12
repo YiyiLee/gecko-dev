@@ -6,16 +6,15 @@
 #include "APZCTreeManager.h"
 #include "AsyncPanZoomController.h"
 #include "Compositor.h"                 // for Compositor
-#include "gfxPrefs.h"                   // for gfxPrefs
 #include "HitTestingTreeNode.h"         // for HitTestingTreeNode
 #include "InputBlockState.h"            // for InputBlockState
 #include "InputData.h"                  // for InputData, etc
 #include "Layers.h"                     // for Layer, etc
 #include "mozilla/dom/Touch.h"          // for Touch
-#include "mozilla/gfx/Logging.h"        // for gfx::TreeLog
 #include "mozilla/gfx/Point.h"          // for Point
 #include "mozilla/layers/APZThreadUtils.h"  // for AssertOnCompositorThread, etc
 #include "mozilla/layers/AsyncCompositionManager.h" // for ViewTransform
+#include "mozilla/layers/AsyncDragMetrics.h" // for AsyncDragMetrics
 #include "mozilla/layers/CompositorParent.h" // for CompositorParent, etc
 #include "mozilla/layers/LayerMetricsWrapper.h"
 #include "mozilla/MouseEvents.h"
@@ -26,12 +25,14 @@
 #include "nsDebug.h"                    // for NS_WARNING
 #include "nsPoint.h"                    // for nsIntPoint
 #include "nsThreadUtils.h"              // for NS_IsMainThread
+#include "mozilla/gfx/Logging.h"        // for gfx::TreeLog
+#include "UnitTransforms.h"             // for ViewAs
+#include "gfxPrefs.h"                   // for gfxPrefs
 #include "OverscrollHandoffState.h"     // for OverscrollHandoffState
 #include "TaskThrottler.h"              // for TaskThrottler
 #include "TreeTraversal.h"              // for generic tree traveral algorithms
 #include "LayersLogging.h"              // for Stringify
 #include "Units.h"                      // for ParentlayerPixel
-#include "UnitTransforms.h"             // for ViewAs
 
 #define ENABLE_APZCTM_LOGGING 0
 // #define ENABLE_APZCTM_LOGGING 1
@@ -350,6 +351,21 @@ GetEventRegionsOverride(HitTestingTreeNode* aParent,
   return result;
 }
 
+void
+APZCTreeManager::StartScrollbarDrag(const ScrollableLayerGuid& aGuid,
+                                    const AsyncDragMetrics& aDragMetrics)
+{
+
+  nsRefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(aGuid);
+  if (!apzc) {
+    return;
+  }
+
+  // TODO Confirm the input block
+  //uint64_t inputBlockId = aDragMetrics.mDragStartSequenceNumber;
+  //mInputQueue->SetConfirmedMouseBlock(inputBlockId, apzc, aDragMetrics);
+}
+
 HitTestingTreeNode*
 APZCTreeManager::PrepareNodeForLayer(const LayerMetricsWrapper& aLayer,
                                      const FrameMetrics& aMetrics,
@@ -378,6 +394,9 @@ APZCTreeManager::PrepareNodeForLayer(const LayerMetricsWrapper& aLayer,
     node->SetHitTestData(GetEventRegions(aLayer), aLayer.GetTransform(),
         aLayer.GetClipRect() ? Some(ParentLayerIntRegion(*aLayer.GetClipRect())) : Nothing(),
         GetEventRegionsOverride(aParent, aLayer));
+    node->SetScrollbarData(aLayer.GetScrollbarTargetContainerId(),
+                           aLayer.GetScrollbarDirection(),
+                           aLayer.GetScrollbarSize());
     return node;
   }
 
@@ -543,6 +562,9 @@ APZCTreeManager::PrepareNodeForLayer(const LayerMetricsWrapper& aLayer,
         GetEventRegionsOverride(aParent, aLayer));
   }
 
+  node->SetScrollbarData(aLayer.GetScrollbarTargetContainerId(),
+                         aLayer.GetScrollbarDirection(),
+                         aLayer.GetScrollbarSize());
   return node;
 }
 
@@ -611,6 +633,18 @@ WillHandleWheelEvent(WidgetWheelEvent* aEvent)
          !EventStateManager::WheelEventNeedsDeltaMultipliers(aEvent);
 }
 
+static bool
+WillHandleMouseEvent(const WidgetMouseEventBase& aEvent)
+{
+  if (!gfxPrefs::APZDragEnabled()) {
+    return false;
+  }
+
+  return aEvent.mMessage == eMouseMove ||
+         aEvent.mMessage == eMouseDown ||
+         aEvent.mMessage == eMouseUp;
+}
+
 template<typename PanGestureOrScrollWheelInput>
 static bool
 WillHandleInput(const PanGestureOrScrollWheelInput& aPanInput)
@@ -656,6 +690,28 @@ APZCTreeManager::ReceiveInputEvent(InputData& aEvent,
       MultiTouchInput& touchInput = aEvent.AsMultiTouchInput();
       result = ProcessTouchInput(touchInput, aOutTargetGuid, aOutInputBlockId);
       break;
+    } case MOUSE_INPUT: {
+      MouseInput& mouseInput = aEvent.AsMouseInput();
+
+      nsRefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(mouseInput.mOrigin,
+                                                            &hitResult);
+      if (apzc) {
+        result = mInputQueue->ReceiveInputEvent(
+          apzc,
+          /* aTargetConfirmed = */ false,
+          mouseInput, aOutInputBlockId);
+
+        // Update the out-parameters so they are what the caller expects.
+        apzc->GetGuid(aOutTargetGuid);
+
+        // TODO Dagging on a scrollbar probably behaves differently from
+        // the other input types in that the gecko coordinates are the same
+        // as the screen coordinates even though the async transform on the APZC
+        // is changing. I'm not really sure at this point and it'll take some
+        // though to figure out properly.
+        //mouseInput.mOrigin = untransformedOrigin;
+      }
+      break;
     } case SCROLLWHEEL_INPUT: {
       FlushRepaintsToClearScreenToGeckoTransform();
 
@@ -680,9 +736,12 @@ APZCTreeManager::ReceiveInputEvent(InputData& aEvent,
         // gecko space should only consist of overscroll-cancelling transforms.
         Matrix4x4 transformToGecko = GetScreenToApzcTransform(apzc)
                                    * GetApzcToGeckoTransform(apzc);
-        MOZ_ASSERT(transformToGecko.Is2D());
-        ScreenPoint untransformedOrigin = TransformTo<ScreenPixel>(
+        Maybe<ScreenPoint> untransformedOrigin = UntransformTo<ScreenPixel>(
           transformToGecko, wheelInput.mOrigin);
+
+        if (!untransformedOrigin) {
+          return result;
+        }
 
         result = mInputQueue->ReceiveInputEvent(
           apzc,
@@ -691,7 +750,7 @@ APZCTreeManager::ReceiveInputEvent(InputData& aEvent,
 
         // Update the out-parameters so they are what the caller expects.
         apzc->GetGuid(aOutTargetGuid);
-        wheelInput.mOrigin = untransformedOrigin;
+        wheelInput.mOrigin = *untransformedOrigin;
       }
       break;
     } case PANGESTURE_INPUT: {
@@ -717,11 +776,14 @@ APZCTreeManager::ReceiveInputEvent(InputData& aEvent,
         // gecko space should only consist of overscroll-cancelling transforms.
         Matrix4x4 transformToGecko = GetScreenToApzcTransform(apzc)
                                    * GetApzcToGeckoTransform(apzc);
-        MOZ_ASSERT(transformToGecko.Is2D());
-        ScreenPoint untransformedStartPoint = TransformTo<ScreenPixel>(
+        Maybe<ScreenPoint> untransformedStartPoint = UntransformTo<ScreenPixel>(
           transformToGecko, panInput.mPanStartPoint);
-        ScreenPoint untransformedDisplacement = TransformVector<ScreenPixel>(
+        Maybe<ScreenPoint> untransformedDisplacement = UntransformVector<ScreenPixel>(
             transformToGecko, panInput.mPanDisplacement, panInput.mPanStartPoint);
+
+        if (!untransformedStartPoint || !untransformedDisplacement) {
+          return result;
+        }
 
         result = mInputQueue->ReceiveInputEvent(
             apzc,
@@ -730,8 +792,8 @@ APZCTreeManager::ReceiveInputEvent(InputData& aEvent,
 
         // Update the out-parameters so they are what the caller expects.
         apzc->GetGuid(aOutTargetGuid);
-        panInput.mPanStartPoint = untransformedStartPoint;
-        panInput.mPanDisplacement = untransformedDisplacement;
+        panInput.mPanStartPoint = *untransformedStartPoint;
+        panInput.mPanDisplacement = *untransformedDisplacement;
       }
       break;
     } case PINCHGESTURE_INPUT: {  // note: no one currently sends these
@@ -741,6 +803,15 @@ APZCTreeManager::ReceiveInputEvent(InputData& aEvent,
       if (apzc) {
         MOZ_ASSERT(hitResult == HitLayer || hitResult == HitDispatchToContentRegion);
 
+        Matrix4x4 outTransform = GetScreenToApzcTransform(apzc)
+                               * GetApzcToGeckoTransform(apzc);
+        Maybe<ScreenPoint> untransformedFocusPoint = UntransformTo<ScreenPixel>(
+          outTransform, pinchInput.mFocusPoint);
+
+        if (!untransformedFocusPoint) {
+          return result;
+        }
+
         result = mInputQueue->ReceiveInputEvent(
             apzc,
             /* aTargetConfirmed = */ hitResult == HitLayer,
@@ -748,11 +819,7 @@ APZCTreeManager::ReceiveInputEvent(InputData& aEvent,
 
         // Update the out-parameters so they are what the caller expects.
         apzc->GetGuid(aOutTargetGuid);
-        Matrix4x4 outTransform = GetScreenToApzcTransform(apzc)
-                               * GetApzcToGeckoTransform(apzc);
-        MOZ_ASSERT(outTransform.Is2D());
-        pinchInput.mFocusPoint = TransformTo<ScreenPixel>(
-            outTransform, pinchInput.mFocusPoint);
+        pinchInput.mFocusPoint = *untransformedFocusPoint;
       }
       break;
     } case TAPGESTURE_INPUT: {  // note: no one currently sends these
@@ -762,6 +829,15 @@ APZCTreeManager::ReceiveInputEvent(InputData& aEvent,
       if (apzc) {
         MOZ_ASSERT(hitResult == HitLayer || hitResult == HitDispatchToContentRegion);
 
+        Matrix4x4 outTransform = GetScreenToApzcTransform(apzc)
+                               * GetApzcToGeckoTransform(apzc);
+        Maybe<ScreenIntPoint> untransformedPoint =
+          UntransformTo<ScreenPixel>(outTransform, tapInput.mPoint);
+
+        if (!untransformedPoint) {
+          return result;
+        }
+
         result = mInputQueue->ReceiveInputEvent(
             apzc,
             /* aTargetConfirmed = */ hitResult == HitLayer,
@@ -769,10 +845,7 @@ APZCTreeManager::ReceiveInputEvent(InputData& aEvent,
 
         // Update the out-parameters so they are what the caller expects.
         apzc->GetGuid(aOutTargetGuid);
-        Matrix4x4 outTransform = GetScreenToApzcTransform(apzc)
-                               * GetApzcToGeckoTransform(apzc);
-        MOZ_ASSERT(outTransform.Is2D());
-        tapInput.mPoint = TransformTo<ScreenPixel>(outTransform, tapInput.mPoint);
+        tapInput.mPoint = *untransformedPoint;
       }
       break;
     }
@@ -864,12 +937,15 @@ APZCTreeManager::ProcessTouchInput(MultiTouchInput& aInput,
     Matrix4x4 transformToApzc = GetScreenToApzcTransform(mApzcForInputBlock);
     Matrix4x4 transformToGecko = GetApzcToGeckoTransform(mApzcForInputBlock);
     Matrix4x4 outTransform = transformToApzc * transformToGecko;
-    MOZ_ASSERT(outTransform.Is2D());
     
     for (size_t i = 0; i < aInput.mTouches.Length(); i++) {
       SingleTouchData& touchData = aInput.mTouches[i];
-      touchData.mScreenPoint = TransformTo<ScreenPixel>(
+      Maybe<ScreenIntPoint> untransformedScreenPoint = UntransformTo<ScreenPixel>(
           outTransform, touchData.mScreenPoint);
+      if (!untransformedScreenPoint) {
+        return nsEventStatus_eIgnore;
+      }
+      touchData.mScreenPoint = *untransformedScreenPoint;
     }
   }
 
@@ -884,21 +960,6 @@ APZCTreeManager::ProcessTouchInput(MultiTouchInput& aInput,
   }
 
   return result;
-}
-
-void
-APZCTreeManager::TransformCoordinateToGecko(const ScreenIntPoint& aPoint,
-                                            LayoutDeviceIntPoint* aOutTransformedPoint)
-{
-  MOZ_ASSERT(aOutTransformedPoint);
-  nsRefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(aPoint, nullptr);
-  if (apzc && aOutTransformedPoint) {
-    Matrix4x4 transformToApzc = GetScreenToApzcTransform(apzc);
-    Matrix4x4 transformToGecko = GetApzcToGeckoTransform(apzc);
-    Matrix4x4 outTransform = transformToApzc * transformToGecko;
-    MOZ_ASSERT(outTransform.Is2D());
-    *aOutTransformedPoint = TransformTo<LayoutDevicePixel>(outTransform, aPoint);
-  }
 }
 
 void
@@ -966,10 +1027,28 @@ APZCTreeManager::ProcessEvent(WidgetInputEvent& aEvent,
     Matrix4x4 transformToApzc = GetScreenToApzcTransform(apzc);
     Matrix4x4 transformToGecko = GetApzcToGeckoTransform(apzc);
     Matrix4x4 outTransform = transformToApzc * transformToGecko;
-    MOZ_ASSERT(outTransform.Is2D());
-    aEvent.refPoint = TransformTo<LayoutDevicePixel>(outTransform, aEvent.refPoint);
+    Maybe<LayoutDeviceIntPoint> untransformedRefPoint =
+      UntransformTo<LayoutDevicePixel>(outTransform, aEvent.refPoint);
+    if (untransformedRefPoint) {
+      aEvent.refPoint = *untransformedRefPoint;
+    }
   }
   return result;
+}
+
+nsEventStatus
+APZCTreeManager::ProcessMouseEvent(WidgetMouseEventBase& aEvent,
+                                   ScrollableLayerGuid* aOutTargetGuid,
+                                   uint64_t* aOutInputBlockId)
+{
+  MouseInput input(aEvent);
+  input.mOrigin = ScreenPoint(aEvent.refPoint.x, aEvent.refPoint.y);
+
+  nsEventStatus status = ReceiveInputEvent(input, aOutTargetGuid, aOutInputBlockId);
+
+  aEvent.refPoint.x = input.mOrigin.x;
+  aEvent.refPoint.y = input.mOrigin.y;
+  return status;
 }
 
 nsEventStatus
@@ -1018,6 +1097,13 @@ APZCTreeManager::ReceiveInputEvent(WidgetInputEvent& aEvent,
   }
 
   switch (aEvent.mClass) {
+    case eMouseEventClass: {
+      WidgetMouseEventBase& mouseEvent = *aEvent.AsMouseEventBase();
+      if (WillHandleMouseEvent(mouseEvent)) {
+        return ProcessMouseEvent(mouseEvent, aOutTargetGuid, aOutInputBlockId);
+      }
+      return ProcessEvent(aEvent, aOutTargetGuid, aOutInputBlockId);
+    }
     case eTouchEventClass: {
       WidgetTouchEvent& touchEvent = *aEvent.AsTouchEvent();
       MultiTouchInput touchInput(touchEvent);
@@ -1546,6 +1632,34 @@ APZCTreeManager::FindTargetNode(HitTestingTreeNode* aNode,
       return node;
     }
   }
+  return nullptr;
+}
+
+nsRefPtr<HitTestingTreeNode>
+APZCTreeManager::FindScrollNode(const AsyncDragMetrics& aDragMetrics)
+{
+  MonitorAutoLock lock(mTreeLock);
+
+  return FindScrollNode(mRootNode, aDragMetrics);
+}
+
+HitTestingTreeNode*
+APZCTreeManager::FindScrollNode(HitTestingTreeNode* aNode,
+                                const AsyncDragMetrics& aDragMetrics)
+{
+  mTreeLock.AssertCurrentThreadOwns();
+
+  for (HitTestingTreeNode* node = aNode; node; node = node->GetPrevSibling()) {
+    if (node->MatchesScrollDragMetrics(aDragMetrics)) {
+      return node;
+    }
+
+    HitTestingTreeNode* match = FindScrollNode(node->GetLastChild(), aDragMetrics);
+    if (match) {
+      return match;
+    }
+  }
+
   return nullptr;
 }
 

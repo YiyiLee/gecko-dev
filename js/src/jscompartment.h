@@ -29,6 +29,7 @@ template<class Node> class ComponentFinder;
 } // namespace gc
 
 struct NativeIterator;
+class ClonedBlockObject;
 
 /*
  * A single-entry cache for some base-10 double-to-string conversions. This
@@ -199,7 +200,7 @@ class MOZ_RAII AutoSetNewObjectMetadata : private JS::CustomAutoRooter
     virtual void trace(JSTracer* trc) override {
         if (prevState_.is<PendingMetadata>()) {
             TraceRoot(trc,
-                      prevState_.as<PendingMetadata>().unsafeGet(),
+                      prevState_.as<PendingMetadata>().unsafeUnbarrieredForTracing(),
                       "Object pending metadata");
         }
     }
@@ -373,6 +374,12 @@ struct JSCompartment
     js::NewObjectMetadataState objectMetadataState;
 
   public:
+    // Recompute the probability with which this compartment should record
+    // profiling data (stack traces, allocations log, etc.) about each
+    // allocation. We consult the probabilities requested by the Debugger
+    // instances observing us, if any.
+    void chooseAllocationSamplingProbability() { savedStacks_.chooseSamplingProbability(this); }
+
     bool hasObjectPendingMetadata() const { return objectMetadataState.is<js::PendingMetadata>(); }
 
     void setObjectPendingMetadata(JSContext* cx, JSObject* obj) {
@@ -397,7 +404,8 @@ struct JSCompartment
                                 size_t* objectMetadataTables,
                                 size_t* crossCompartmentWrappers,
                                 size_t* regexpCompartment,
-                                size_t* savedStacksSet);
+                                size_t* savedStacksSet,
+                                size_t* nonSyntacticLexicalScopes);
 
     /*
      * Shared scope property tree, and arena-pool for allocating its nodes.
@@ -442,6 +450,13 @@ struct JSCompartment
     // All unboxed layouts in the compartment.
     mozilla::LinkedList<js::UnboxedLayout> unboxedLayouts;
 
+  private:
+    // All non-syntactic lexical scopes in the compartment. These are kept in
+    // a map because when loading scripts into a non-syntactic scope, we need
+    // to use the same lexical scope to persist lexical bindings.
+    js::ObjectWeakMap* nonSyntacticLexicalScopes_;
+
+  public:
     /* During GC, stores the index of this compartment in rt->compartments. */
     unsigned                     gcIndex;
 
@@ -510,6 +525,11 @@ struct JSCompartment
     struct WrapperEnum : public js::WrapperMap::Enum {
         explicit WrapperEnum(JSCompartment* c) : js::WrapperMap::Enum(c->crossCompartmentWrappers) {}
     };
+
+    js::ClonedBlockObject* getOrCreateNonSyntacticLexicalScope(JSContext* cx,
+                                                               js::HandleObject enclosingStatic,
+                                                               js::HandleObject enclosingScope);
+    js::ClonedBlockObject* getNonSyntacticLexicalScope(JSObject* enclosingScope) const;
 
     /*
      * This method traces data that is live iff we know that this compartment's
@@ -662,7 +682,8 @@ struct JSCompartment
     // Debugger API, or for the entire runtime.
     bool collectCoverage() const {
         return debuggerObservesCoverage() ||
-               runtimeFromAnyThread()->profilingScripts;
+               runtimeFromAnyThread()->profilingScripts ||
+               runtimeFromAnyThread()->lcovOutput.isEnabled();
     }
     void clearScriptCounts();
 
@@ -746,6 +767,11 @@ struct JSCompartment
 
   public:
     void addTelemetry(const char* filename, DeprecatedLanguageExtension e);
+
+  public:
+    // Aggregated output used to collect JSScript hit counts when code coverage
+    // is enabled.
+    js::coverage::LCovCompartment lcovOutput;
 };
 
 inline bool

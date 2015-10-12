@@ -2014,7 +2014,7 @@ HTMLMediaElement::RemoveMediaElementFromURITable()
   }
   entry->mElements.RemoveElement(this);
   if (entry->mElements.IsEmpty()) {
-    gElementTable->RemoveEntry(mLoadingSrc);
+    gElementTable->RemoveEntry(entry);
     if (gElementTable->Count() == 0) {
       delete gElementTable;
       gElementTable = nullptr;
@@ -4757,17 +4757,17 @@ HTMLMediaElement::NotifyAudioChannelAgent(bool aPlaying)
   // this method has some content JS in its stack.
   AutoNoJSAPI nojsapi;
 
-  // Don't notify playback if this element doesn't have any audio tracks.
-  uint32_t notify = HasAudio() ? nsIAudioChannelAgent::AUDIO_AGENT_NOTIFY :
-                                 nsIAudioChannelAgent::AUDIO_AGENT_DONT_NOTIFY;
-
   if (aPlaying) {
+    // Don't notify playback if this element doesn't have any audio tracks.
+    uint32_t notify = HasAudio() ? nsIAudioChannelAgent::AUDIO_AGENT_NOTIFY :
+                                   nsIAudioChannelAgent::AUDIO_AGENT_DONT_NOTIFY;
+
     float volume = 0.0;
     bool muted = true;
     mAudioChannelAgent->NotifyStartedPlaying(notify, &volume, &muted);
     WindowVolumeChanged(volume, muted);
   } else {
-    mAudioChannelAgent->NotifyStoppedPlaying(notify);
+    mAudioChannelAgent->NotifyStoppedPlaying();
     mAudioChannelAgent = nullptr;
   }
 }

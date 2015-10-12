@@ -13,7 +13,7 @@
 namespace mozilla
 {
 
-struct AvFormatLib;
+struct AvCodecLib;
 
 class FFmpegRuntimeLinker
 {
@@ -22,9 +22,11 @@ public:
   static void Unlink();
   static already_AddRefed<PlatformDecoderModule> CreateDecoderModule();
 
+  static bool sFFmpegDecoderEnabled;
+
 private:
   static void* sLinkedLib;
-  static const AvFormatLib* sLib;
+  static const AvCodecLib* sLib;
 
   static bool Bind(const char* aLibName, uint32_t Version);
 

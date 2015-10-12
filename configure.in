@@ -414,35 +414,7 @@ MOZ_TOOL_VARIABLES
 
 MOZ_CHECK_COMPILER_WRAPPER
 
-MOZ_PATH_PROG(RUSTC, rustc)
-if test -n "$RUSTC"; then
-  AC_MSG_CHECKING([rustc version])
-  RUSTC_VERSION=`$RUSTC --version | cut -d ' ' -f 2`
-  # Parse out semversion elements.
-  _RUSTC_MAJOR_VERSION=`echo ${RUSTC_VERSION} | cut -d . -f 1`
-  _RUSTC_MINOR_VERSION=`echo ${RUSTC_VERSION} | cut -d . -f 2`
-  _RUSTC_EXTRA_VERSION=`echo ${RUSTC_VERSION} | cut -d . -f 3 | cut -d + -f 1`
-  _RUSTC_PATCH_VERSION=`echo ${_RUSTC_EXTRA_VERSION} | cut -d '-' -f 1`
-  AC_MSG_RESULT([$RUSTC_VERSION (v${_RUSTC_MAJOR_VERSION}.${_RUSTC_MINOR_VERSION}.${_RUSTC_PATCH_VERSION})])
-fi
-MOZ_ARG_ENABLE_BOOL([rust],
-                    [  --enable-rust           Include Rust language sources],
-                    [MOZ_RUST=1],
-                    [MOZ_RUST= ])
-if test -z "$RUSTC" -a -n "$MOZ_RUST"; then
-  AC_MSG_ERROR([Rust compiler not found.
-    To compile rust language sources, you must have 'rustc' in your path.
-    See http://www.rust-lang.org/ for more information.])
-fi
-if test -n "$MOZ_RUST" && test -z "$_RUSTC_MAJOR_VERSION" -o \
-  "$_RUSTC_MAJOR_VERSION" -lt 1; then
-  AC_MSG_ERROR([Rust compiler ${RUSTC_VERSION} is too old.
-    To compile Rust language sources please install at least
-    version 1.0 of the 'rustc' toolchain and make sure it is
-    first in your path.
-    You can verify this by typing 'rustc --version'.])
-fi
-AC_SUBST(MOZ_RUST)
+MOZ_RUST_SUPPORT
 
 dnl ========================================================
 dnl Check for MacOS deployment target version
@@ -505,6 +477,9 @@ EOF
       to mozconfig, disable Rust support, or use an alternate toolchain.])
   fi
 fi
+
+AC_PROG_CPP
+AC_PROG_CXXCPP
 
 dnl ========================================================
 dnl Special win32 checks
@@ -695,8 +670,6 @@ See https://developer.mozilla.org/en/Windows_Build_Prerequisites.])
         fi
         CFLAGS="$CFLAGS -D_HAS_EXCEPTIONS=0"
         CXXFLAGS="$CXXFLAGS -D_HAS_EXCEPTIONS=0"
-
-        MOZ_FIND_WINSDK_VERSION
     else
         # Check w32api version
         _W32API_MAJOR_VERSION=`echo $W32API_VERSION | $AWK -F\. '{ print $1 }'`
@@ -748,10 +721,9 @@ See https://developer.mozilla.org/en/Windows_Build_Prerequisites.])
         # strsafe.h on mingw uses macros for function deprecation that pollutes namespace
         # causing problems with local implementations with the same name.
         AC_DEFINE(STRSAFE_NO_DEPRECATE)
-
-        MOZ_WINSDK_MAXVER=0x06030000
     fi # !GNU_CC
 
+    MOZ_FIND_WINSDK_VERSION
     AC_DEFINE_UNQUOTED(WINVER,0x$WINVER)
     AC_DEFINE_UNQUOTED(_WIN32_WINNT,0x$WINVER)
     # Require OS features provided by IE 6.0 SP2 (XP SP2)
@@ -772,9 +744,6 @@ See https://developer.mozilla.org/en/Windows_Build_Prerequisites.])
     AC_SUBST(MOZ_WINSDK_MAXVER)
     ;;
 esac
-
-AC_PROG_CPP
-AC_PROG_CXXCPP
 
 if test -n "$_WIN32_MSVC"; then
     SKIP_PATH_CHECKS=1
@@ -853,6 +822,7 @@ MOZ_PATH_PROG(RPMBUILD, rpmbuild, :)
 AC_SUBST(RPMBUILD)
 
 MOZ_PATH_PROG(GENISOIMAGE, genisoimage, :)
+MOZ_PATH_PROG(DSYMUTIL, dsymutil, llvm-dsymutil :)
 
 if test "$COMPILE_ENVIRONMENT"; then
 
@@ -1889,6 +1859,9 @@ dnl ==============================================================
 MOZILLA_VERSION=`$PYTHON $srcdir/python/mozbuild/mozbuild/milestone.py --topsrcdir $srcdir`
 MOZILLA_UAVERSION=`$PYTHON $srcdir/python/mozbuild/mozbuild/milestone.py --topsrcdir $srcdir --uaversion`
 MOZILLA_SYMBOLVERSION=`$PYTHON $srcdir/python/mozbuild/mozbuild/milestone.py --topsrcdir $srcdir --symbolversion`
+if test -z "$MOZILLA_VERSION"; then
+  AC_MSG_ERROR([failed to read version info from milestone file])
+fi
 
 dnl Get version of various core apps from the version files.
 FIREFOX_VERSION=`cat $_topsrcdir/browser/config/version.txt`
@@ -4038,14 +4011,20 @@ browser)
 xulrunner)
   AC_DEFINE(MOZ_XULRUNNER)
   ;;
-b2g)
-  AC_DEFINE(MOZ_B2G)
-  ;;
-b2g/dev)
-  AC_DEFINE(MOZ_B2G)
-  AC_DEFINE(MOZ_MULET)
-  ;;
 esac
+
+if test -n "$MOZ_B2G"; then
+    AC_DEFINE(MOZ_B2G)
+fi
+
+# Graphene is a desktop runtime for running applications with a HTML UI.
+if test -n "$MOZ_GRAPHENE"; then
+    AC_DEFINE(MOZ_GRAPHENE)
+fi
+
+if test -n "$MOZ_MULET"; then
+    AC_DEFINE(MOZ_MULET)
+fi
 
 if test -n "$MOZ_B2GDROID"; then
     AC_DEFINE(MOZ_B2GDROID)
@@ -4088,7 +4067,7 @@ if test -z "$gonkdir" ; then
             ;;
         esac
 
-        MOZ_ANDROID_SDK(22, 22.0.1)
+        MOZ_ANDROID_SDK(23, 23.0.1)
         ;;
     esac
 fi
@@ -6070,7 +6049,7 @@ MOZ_ARG_DISABLE_BOOL(crashreporter,
     [MOZ_CRASHREPORTER=],
     [MOZ_CRASHREPORTER=F # Force enable breakpad])
 
-if test "$OS_ARCH" != "$HOST_OS_ARCH" -a "$OS_ARCH" != "WINNT"; then
+if test "$OS_ARCH" != "$HOST_OS_ARCH" -a "$OS_ARCH" != "WINNT" -a "$OS_ARCH" != "Darwin"; then
   if test "$MOZ_CRASHREPORTER" = F; then
     AC_MSG_ERROR([Cannot --enable-crashreporter, as breakpad tools do not support compiling on $HOST_OS_ARCH while targeting $OS_ARCH.])
   fi
@@ -7527,6 +7506,16 @@ if test -n "$MOZ_REFLOW_PERF"; then
 fi
 
 dnl ========================================================
+dnl = Horizon build options - set default preferences for
+dnl   the horizon project. Horizon is a browser built on
+dnl   top of the graphene runtime.
+dnl ========================================================
+if test -n "$MOZ_HORIZON"; then
+    AC_DEFINE(MOZ_HORIZON)
+fi
+AC_SUBST(MOZ_HORIZON)
+
+dnl ========================================================
 dnl = Offer a way to disable the startup cache
 dnl ========================================================
 
@@ -8799,9 +8788,9 @@ AC_SUBST(MOZ_PKG_SPECIAL)
 AC_SUBST(MOZ_SIMPLE_PACKAGE_NAME)
 
 AC_SUBST(MOZILLA_OFFICIAL)
-
-# Build revisions should always be present in official builds
 if test "$MOZILLA_OFFICIAL"; then
+    AC_DEFINE(MOZILLA_OFFICIAL)
+    # Build revisions should always be present in official builds
     MOZ_INCLUDE_SOURCE_INFO=1
 fi
 

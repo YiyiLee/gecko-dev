@@ -648,6 +648,7 @@ const int TexturePacket::kTargetFieldNumber;
 const int TexturePacket::kDataformatFieldNumber;
 const int TexturePacket::kGlcontextFieldNumber;
 const int TexturePacket::kDataFieldNumber;
+const int TexturePacket::kIsMaskFieldNumber;
 #endif  // !_MSC_VER
 
 TexturePacket::TexturePacket()
@@ -678,6 +679,7 @@ void TexturePacket::SharedCtor() {
   dataformat_ = 0u;
   glcontext_ = GOOGLE_ULONGLONG(0);
   data_ = const_cast< ::std::string*>(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
+  ismask_ = false;
   ::memset(_has_bits_, 0, sizeof(_has_bits_));
 }
 
@@ -732,10 +734,13 @@ void TexturePacket::Clear() {
   if (_has_bits_[0 / 32] & 255) {
     ZR_(layerref_, glcontext_);
   }
-  if (has_data()) {
-    if (data_ != &::google::protobuf::internal::GetEmptyStringAlreadyInited()) {
-      data_->clear();
+  if (_has_bits_[8 / 32] & 768) {
+    if (has_data()) {
+      if (data_ != &::google::protobuf::internal::GetEmptyStringAlreadyInited()) {
+        data_->clear();
+      }
     }
+    ismask_ = false;
   }
 
 #undef OFFSET_OF_FIELD_
@@ -755,7 +760,7 @@ bool TexturePacket::MergePartialFromCodedStream(
       &unknown_fields_string);
   // @@protoc_insertion_point(parse_start:mozilla.layers.layerscope.TexturePacket)
   for (;;) {
-    ::std::pair< ::google::protobuf::uint32, bool> p = input->ReadTagWithCutoff(127);
+    ::std::pair< ::google::protobuf::uint32, bool> p = input->ReadTagWithCutoff(16383);
     tag = p.first;
     if (!p.second) goto handle_unusual;
     switch (::google::protobuf::internal::WireFormatLite::GetTagFieldNumber(tag)) {
@@ -887,6 +892,21 @@ bool TexturePacket::MergePartialFromCodedStream(
         } else {
           goto handle_unusual;
         }
+        if (input->ExpectTag(160)) goto parse_isMask;
+        break;
+      }
+
+      // optional bool isMask = 20;
+      case 20: {
+        if (tag == 160) {
+         parse_isMask:
+          DO_((::google::protobuf::internal::WireFormatLite::ReadPrimitive<
+                   bool, ::google::protobuf::internal::WireFormatLite::TYPE_BOOL>(
+                 input, &ismask_)));
+          set_has_ismask();
+        } else {
+          goto handle_unusual;
+        }
         if (input->ExpectAtEnd()) goto success;
         break;
       }
@@ -960,6 +980,11 @@ void TexturePacket::SerializeWithCachedSizes(
   if (has_data()) {
     ::google::protobuf::internal::WireFormatLite::WriteBytesMaybeAliased(
       9, this->data(), output);
+  }
+
+  // optional bool isMask = 20;
+  if (has_ismask()) {
+    ::google::protobuf::internal::WireFormatLite::WriteBool(20, this->ismask(), output);
   }
 
   output->WriteRaw(unknown_fields().data(),
@@ -1036,6 +1061,11 @@ int TexturePacket::ByteSize() const {
           this->data());
     }
 
+    // optional bool isMask = 20;
+    if (has_ismask()) {
+      total_size += 2 + 1;
+    }
+
   }
   total_size += unknown_fields().size();
 
@@ -1082,6 +1112,9 @@ void TexturePacket::MergeFrom(const TexturePacket& from) {
     if (from.has_data()) {
       set_data(from.data());
     }
+    if (from.has_ismask()) {
+      set_ismask(from.ismask());
+    }
   }
   mutable_unknown_fields()->append(from.unknown_fields());
 }
@@ -1109,6 +1142,7 @@ void TexturePacket::Swap(TexturePacket* other) {
     std::swap(dataformat_, other->dataformat_);
     std::swap(glcontext_, other->glcontext_);
     std::swap(data_, other->data_);
+    std::swap(ismask_, other->ismask_);
     std::swap(_has_bits_[0], other->_has_bits_[0]);
     _unknown_fields_.swap(other->_unknown_fields_);
     std::swap(_cached_size_, other->_cached_size_);
@@ -1186,16 +1220,10 @@ bool LayersPacket_Layer_Filter_IsValid(int value) {
 }
 
 #ifndef _MSC_VER
-const LayersPacket_Layer_Filter LayersPacket_Layer::FILTER_FAST;
 const LayersPacket_Layer_Filter LayersPacket_Layer::FILTER_GOOD;
-const LayersPacket_Layer_Filter LayersPacket_Layer::FILTER_BEST;
-const LayersPacket_Layer_Filter LayersPacket_Layer::FILTER_NEAREST;
-const LayersPacket_Layer_Filter LayersPacket_Layer::FILTER_BILINEAR;
-const LayersPacket_Layer_Filter LayersPacket_Layer::FILTER_GAUSSIAN;
+const LayersPacket_Layer_Filter LayersPacket_Layer::FILTER_LINEAR;
+const LayersPacket_Layer_Filter LayersPacket_Layer::FILTER_POINT;
 const LayersPacket_Layer_Filter LayersPacket_Layer::FILTER_SENTINEL;
-const LayersPacket_Layer_Filter LayersPacket_Layer::Filter_MIN;
-const LayersPacket_Layer_Filter LayersPacket_Layer::Filter_MAX;
-const int LayersPacket_Layer::Filter_ARRAYSIZE;
 #endif  // _MSC_VER
 #ifndef _MSC_VER
 const int LayersPacket_Layer_Size::kWFieldNumber;

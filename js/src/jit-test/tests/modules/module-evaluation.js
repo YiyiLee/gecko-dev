@@ -26,15 +26,15 @@ assertEq(typeof m.evaluation(), "undefined");
 
 // Check top level variables are initialized by evaluation.
 m = parseModule("export var x = 2 + 2;");
-assertEq(typeof m.initialEnvironment.x, "undefined");
+assertEq(typeof getModuleEnvironmentValue(m, "x"), "undefined");
 m.declarationInstantiation();
 m.evaluation();
-assertEq(m.environment.x, 4);
+assertEq(getModuleEnvironmentValue(m, "x"), 4);
 
 m = parseModule("export let x = 2 * 3;");
 m.declarationInstantiation();
 m.evaluation();
-assertEq(m.environment.x, 6);
+assertEq(getModuleEnvironmentValue(m, "x"), 6);
 
 // Set up a module to import from.
 let a = moduleRepo['a'] =
@@ -48,7 +48,8 @@ parseAndEvaluate("var foo = 1;");
 parseAndEvaluate("let foo = 1;");
 parseAndEvaluate("const foo = 1");
 parseAndEvaluate("function foo() {}");
-parseAndEvaluate("class foo { constructor() {} }");
+if (classesEnabled())
+    parseAndEvaluate("class foo { constructor() {} }");
 
 // Check we can evaluate all module-related syntax.
 parseAndEvaluate("export var foo = 1;");
@@ -56,14 +57,16 @@ parseAndEvaluate("export let foo = 1;");
 parseAndEvaluate("export const foo = 1;");
 parseAndEvaluate("var x = 1; export { x };");
 parseAndEvaluate("export default 1");
-parseAndEvaluate("export default class { constructor() {} };");
 parseAndEvaluate("export default function() {};");
-parseAndEvaluate("export default class foo { constructor() {} };");
 parseAndEvaluate("export default function foo() {};");
 parseAndEvaluate("import a from 'a';");
 parseAndEvaluate("import { x } from 'a';");
 parseAndEvaluate("import * as ns from 'a';");
 parseAndEvaluate("export * from 'a'");
+if (classesEnabled()) {
+    parseAndEvaluate("export default class { constructor() {} };");
+    parseAndEvaluate("export default class foo { constructor() {} };");
+}
 
 // Test default import
 m = parseModule("import a from 'a'; a;")
@@ -96,4 +99,5 @@ assertDeepEq(parseAndEvaluate(`import { x as x1, y as y1 } from 'c1';
 m = parseModule("import { x } from 'a'; function f() { return x; }")
 m.declarationInstantiation();
 m.evaluation();
-assertEq(m.environment.f(), 1);
+let f = getModuleEnvironmentValue(m, "f");
+assertEq(f(), 1);

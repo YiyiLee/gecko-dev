@@ -12,7 +12,6 @@
 #include "nsIDocShell.h"
 #include "nsRefreshDriver.h"
 #include "mozilla/dom/HTMLCanvasElement.h"
-#include "GraphicsFilter.h"
 #include "mozilla/RefPtr.h"
 
 #define NS_ICANVASRENDERINGCONTEXTINTERNAL_IID \
@@ -80,11 +79,9 @@ public:
     return mCanvasElement;
   }
 
-#ifdef DEBUG
-    // Useful for testing
-    virtual int32_t GetWidth() const = 0;
-    virtual int32_t GetHeight() const = 0;
-#endif
+  // Dimensions of the canvas, in pixels.
+  virtual int32_t GetWidth() const = 0;
+  virtual int32_t GetHeight() const = 0;
 
   // Sets the dimensions of the canvas, in pixels.  Called
   // whenever the size of the element changes.

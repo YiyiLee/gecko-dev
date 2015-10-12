@@ -9,7 +9,7 @@
 const TEST_URI = `
   <style type="text/css">
     .matches {
-      color: #F00;
+      color: #f00;
     }
   </style>
   <span id="matches" class="matches">Some styled text</span>
@@ -34,8 +34,14 @@ function checkColorCycling(container, inspector) {
   let valueNode = container.querySelector(".computedview-color");
   let win = inspector.sidebar.getWindowForTab("computedview");
 
-  // Hex (default)
-  is(valueNode.textContent, "#F00", "Color displayed as a hex value.");
+  // "Authored" (default; currently the computed value)
+  is(valueNode.textContent, "rgb(255, 0, 0)",
+                            "Color displayed as an RGB value.");
+
+  // Hex
+  EventUtils.synthesizeMouseAtCenter(swatch,
+                                     {type: "mousedown", shiftKey: true}, win);
+  is(valueNode.textContent, "#f00", "Color displayed as a hex value.");
 
   // HSL
   EventUtils.synthesizeMouseAtCenter(swatch,
@@ -55,15 +61,9 @@ function checkColorCycling(container, inspector) {
   is(valueNode.textContent, "red",
                             "Color displayed as a color name.");
 
-  // "Authored" (currently the computed value)
+  // Back to "Authored"
   EventUtils.synthesizeMouseAtCenter(swatch,
                                      {type: "mousedown", shiftKey: true}, win);
   is(valueNode.textContent, "rgb(255, 0, 0)",
                             "Color displayed as an RGB value.");
-
-  // Back to hex
-  EventUtils.synthesizeMouseAtCenter(swatch,
-                                     {type: "mousedown", shiftKey: true}, win);
-  is(valueNode.textContent, "#F00",
-                            "Color displayed as hex again.");
 }

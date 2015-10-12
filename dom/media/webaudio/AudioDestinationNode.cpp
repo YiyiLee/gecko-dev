@@ -388,7 +388,7 @@ void
 AudioDestinationNode::DestroyAudioChannelAgent()
 {
   if (mAudioChannelAgent && !Context()->IsOffline()) {
-    mAudioChannelAgent->NotifyStoppedPlaying(nsIAudioChannelAgent::AUDIO_AGENT_NOTIFY);
+    mAudioChannelAgent->NotifyStoppedPlaying();
     mAudioChannelAgent = nullptr;
   }
 }
@@ -629,23 +629,33 @@ AudioDestinationNode::CheckAudioChannelPermissions(AudioChannel aValue)
   return perm == nsIPermissionManager::ALLOW_ACTION;
 }
 
-void
+nsresult
 AudioDestinationNode::CreateAudioChannelAgent()
 {
   if (mIsOffline) {
-    return;
+    return NS_OK;
   }
 
+  nsresult rv = NS_OK;
   if (mAudioChannelAgent) {
-    mAudioChannelAgent->NotifyStoppedPlaying(nsIAudioChannelAgent::AUDIO_AGENT_NOTIFY);
+    rv = mAudioChannelAgent->NotifyStoppedPlaying();
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
   }
 
   mAudioChannelAgent = new AudioChannelAgent();
-  mAudioChannelAgent->InitWithWeakCallback(GetOwner(),
+  rv = mAudioChannelAgent->InitWithWeakCallback(GetOwner(),
                                            static_cast<int32_t>(mAudioChannel),
                                            this);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
 
-  WindowAudioCaptureChanged();
+  rv = WindowAudioCaptureChanged();
+  NS_WARN_IF(NS_FAILED(rv));
+  return rv;
+
 }
 
 void
@@ -729,7 +739,7 @@ AudioDestinationNode::InputMuted(bool aMuted)
   }
 
   if (aMuted) {
-    mAudioChannelAgent->NotifyStoppedPlaying(nsIAudioChannelAgent::AUDIO_AGENT_NOTIFY);
+    mAudioChannelAgent->NotifyStoppedPlaying();
     return;
   }
 

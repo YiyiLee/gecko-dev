@@ -38,8 +38,6 @@
 
 #include "jsatominlines.h"
 
-#include "jit/AtomicOperations-inl.h"
-
 #include "vm/ArgumentsObject-inl.h"
 #include "vm/ArrayObject-inl.h"
 #include "vm/Interpreter-inl.h"
@@ -2701,7 +2699,7 @@ js::array_concat(JSContext* cx, unsigned argc, Value* vp)
             }
         }
     } else {
-        narr = NewDenseEmptyArray(cx);
+        narr = NewFullyAllocatedArrayTryReuseGroup(cx, aobj, 0);
         if (!narr)
             return false;
         args.rval().setObject(*narr);

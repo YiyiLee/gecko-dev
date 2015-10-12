@@ -128,10 +128,6 @@ MediaOmxReader::MediaOmxReader(AbstractMediaDecoder *aDecoder)
   , mIsShutdown(false)
   , mMP3FrameParser(-1)
 {
-  if (!gMediaDecoderLog) {
-    gMediaDecoderLog = PR_NewLogModule("MediaDecoder");
-  }
-
   mAudioChannel = dom::AudioChannelService::GetDefaultAudioChannel();
 }
 
@@ -393,9 +389,8 @@ bool MediaOmxReader::DecodeVideoFrame(bool &aKeyframeSkip,
       picture.height = (frame.Y.mHeight * mPicture.height) / mInitialFrame.height;
     }
 
-    MOZ_ASSERT(mStreamSource);
     // This is the approximate byte position in the stream.
-    int64_t pos = mStreamSource->Tell();
+    int64_t pos = mStreamSource ? mStreamSource->Tell() : 0;
 
     nsRefPtr<VideoData> v;
     if (!frame.mGraphicBuffer) {
@@ -496,9 +491,8 @@ bool MediaOmxReader::DecodeAudioData()
   MOZ_ASSERT(OnTaskQueue());
   EnsureActive();
 
-  MOZ_ASSERT(mStreamSource);
   // This is the approximate byte position in the stream.
-  int64_t pos = mStreamSource->Tell();
+  int64_t pos = mStreamSource ? mStreamSource->Tell() : 0;
 
   // Read next frame
   MPAPI::AudioFrame source;

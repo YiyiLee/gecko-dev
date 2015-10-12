@@ -395,7 +395,7 @@ RespondWithHandler::ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValu
 void
 RespondWithHandler::RejectedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue)
 {
-  CancelRequest(NS_ERROR_INTERCEPTION_FAILED);
+  CancelRequest(NS_ERROR_REJECTED_RESPONSE_INTERCEPTION);
 }
 
 void
@@ -421,6 +421,7 @@ FetchEvent::RespondWith(Promise& aArg, ErrorResult& aRv)
     mPromise = &aArg;
   }
   nsRefPtr<InternalRequest> ir = mRequest->GetInternalRequest();
+  StopImmediatePropagation();
   mWaitToRespond = true;
   nsRefPtr<RespondWithHandler> handler =
     new RespondWithHandler(mChannel, mRequest->Mode(), ir->IsClientRequest(),

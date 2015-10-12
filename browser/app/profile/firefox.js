@@ -1174,12 +1174,10 @@ pref("dom.ipc.plugins.sandbox-level.flash", 0);
 // This controls the strength of the Windows content process sandbox for testing
 // purposes. This will require a restart.
 // On windows these levels are:
-// 0 - sandbox with USER_NON_ADMIN access token level
-// 1 - level 0 plus low integrity
-// 2 - a policy that we can reasonably call an effective sandbox
-// 3 - an equivalent basic policy to the Chromium renderer processes
+// See - security/sandbox/win/src/sandboxbroker/sandboxBroker.cpp
+// SetSecurityLevelForContentProcess() for what the different settings mean.
 #if defined(NIGHTLY_BUILD)
-pref("security.sandbox.content.level", 1);
+pref("security.sandbox.content.level", 2);
 #else
 pref("security.sandbox.content.level", 0);
 #endif
@@ -1381,7 +1379,7 @@ pref("devtools.inspector.showAllAnonymousContent", false);
 pref("devtools.inspector.mdnDocsTooltip.enabled", true);
 
 // DevTools default color unit
-pref("devtools.defaultColorUnit", "hex");
+pref("devtools.defaultColorUnit", "authored");
 
 // Enable the Responsive UI tool
 pref("devtools.responsiveUI.no-reload-notification", false);
@@ -1709,7 +1707,6 @@ pref("loop.feedback.baseUrl", "https://input.mozilla.org/api/v1/feedback");
 pref("loop.feedback.product", "Loop");
 pref("loop.debug.loglevel", "Error");
 pref("loop.debug.dispatcher", false);
-pref("loop.debug.websocket", false);
 pref("loop.debug.sdk", false);
 pref("loop.debug.twoWayMediaTelemetry", false);
 pref("loop.feedback.dateLastSeenSec", 0);
@@ -1827,6 +1824,11 @@ pref("ui.key.menuAccessKeyFocuses", true);
 pref("media.eme.enabled", true);
 pref("media.eme.apiVisible", true);
 
+// If decoding-via-gmp is turned on for <video>, default to using
+// Adobe's GMP for decoding.
+pref("media.fragmented-mp4.gmp.aac", 2);
+pref("media.fragmented-mp4.gmp.h264", 2);
+
 // Whether we should run a test-pattern through EME GMPs before assuming they'll
 // decode H.264.
 pref("media.gmp.trial-create.enabled", true);
@@ -1884,6 +1886,12 @@ pref("browser.tabs.remote.autostart.1", false);
 pref("browser.tabs.remote.autostart.2", true);
 #endif
 
+// For the about:tabcrashed page
+pref("browser.tabs.crashReporting.sendReport", true);
+pref("browser.tabs.crashReporting.includeURL", false);
+pref("browser.tabs.crashReporting.emailMe", false);
+pref("browser.tabs.crashReporting.email", "");
+
 #ifdef NIGHTLY_BUILD
 #ifndef MOZ_MULET
 pref("layers.async-pan-zoom.enabled", true);
@@ -1929,12 +1937,7 @@ pref("browser.pocket.oAuthConsumerKey", "40249-e88c401e1b1f2242d9e441c4");
 pref("browser.pocket.useLocaleList", true);
 pref("browser.pocket.enabledLocales", "cs de en-GB en-US en-ZA es-ES es-MX fr hu it ja ja-JP-mac ko nl pl pt-BR pt-PT ru zh-CN zh-TW");
 
-// View source tabs are only enabled by default for Dev. Ed and Nightly.
-#ifdef RELEASE_BUILD
-pref("view_source.tab", false);
-#else
 pref("view_source.tab", true);
-#endif
 
 // Enable ServiceWorkers for Push API consumers.
 // Interception is still disabled on beta and release.

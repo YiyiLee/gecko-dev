@@ -857,6 +857,18 @@ IonBuilder::build()
     // what we can in an infallible manner.
     rewriteParameters();
 
+    // Check for redeclaration errors for global scripts.
+    if (!info().funMaybeLazy() && !info().module() &&
+        script()->bindings.numBodyLevelLocals() > 0)
+    {
+        MGlobalNameConflictsCheck* redeclCheck = MGlobalNameConflictsCheck::New(alloc());
+        current->add(redeclCheck);
+        MResumePoint* entryRpCopy = MResumePoint::Copy(alloc(), current->entryResumePoint());
+        if (!entryRpCopy)
+            return false;
+        redeclCheck->setResumePoint(entryRpCopy);
+    }
+
     // It's safe to start emitting actual IR, so now build the scope chain.
     if (!initScopeChain())
         return false;
@@ -1235,10 +1247,10 @@ IonBuilder::initScopeChain(MDefinition* callee)
         scope = constant(ObjectValue(module->initialEnvironment()));
     } else {
         // For global scripts without a non-syntactic global scope, the scope
-        // chain is the global object.
+        // chain is the global lexical scope.
         MOZ_ASSERT(!script()->isForEval());
         MOZ_ASSERT(!script()->hasNonSyntacticScope());
-        scope = constant(ObjectValue(script()->global()));
+        scope = constant(ObjectValue(script()->global().lexicalScope()));
     }
 
     current->setScopeChain(scope);
@@ -1675,8 +1687,11 @@ IonBuilder::inspectOpcode(JSOp op)
         return jsop_andor(op);
 
       case JSOP_DEFVAR:
-      case JSOP_DEFCONST:
         return jsop_defvar(GET_UINT32_INDEX(pc));
+
+      case JSOP_DEFLET:
+      case JSOP_DEFCONST:
+        return jsop_deflexical(GET_UINT32_INDEX(pc));
 
       case JSOP_DEFFUN:
         return jsop_deffun(GET_UINT32_INDEX(pc));
@@ -1764,6 +1779,14 @@ IonBuilder::inspectOpcode(JSOp op)
         current->setLocal(GET_LOCALNO(pc));
         return true;
 
+      case JSOP_INITGLEXICAL: {
+        MOZ_ASSERT(!script()->hasNonSyntacticScope());
+        MDefinition* value = current->pop();
+        current->push(constant(ObjectValue(script()->global().lexicalScope())));
+        current->push(value);
+        return jsop_setprop(info().getAtom(pc)->asPropertyName());
+      }
+
       case JSOP_CHECKALIASEDLEXICAL:
         return jsop_checkaliasedlet(ScopeCoordinate(pc));
 
@@ -1844,7 +1867,8 @@ IonBuilder::inspectOpcode(JSOp op)
 
       case JSOP_CALL:
       case JSOP_NEW:
-        return jsop_call(GET_ARGC(pc), (JSOp)*pc == JSOP_NEW);
+      case JSOP_SUPERCALL:
+        return jsop_call(GET_ARGC(pc), (JSOp)*pc == JSOP_NEW || (JSOp)*pc == JSOP_SUPERCALL);
 
       case JSOP_EVAL:
       case JSOP_STRICTEVAL:
@@ -1870,7 +1894,7 @@ IonBuilder::inspectOpcode(JSOp op)
         PropertyName* name = info().getAtom(pc)->asPropertyName();
         if (script()->hasNonSyntacticScope())
             return jsop_setprop(name);
-        JSObject* obj = &script()->global();
+        JSObject* obj = testGlobalLexicalBinding(name);
         return setStaticName(obj, name);
       }
 
@@ -1887,8 +1911,10 @@ IonBuilder::inspectOpcode(JSOp op)
       }
 
       case JSOP_BINDGNAME:
-        if (!script()->hasNonSyntacticScope())
-            return pushConstant(ObjectValue(script()->global()));
+        if (!script()->hasNonSyntacticScope()) {
+            JSObject* scope = testGlobalLexicalBinding(info().getName(pc));
+            return pushConstant(ObjectValue(*scope));
+        }
         // Fall through to JSOP_BINDNAME
       case JSOP_BINDNAME:
         return jsop_bindname(info().getName(pc));
@@ -4444,6 +4470,15 @@ IonBuilder::processReturn(JSOp op)
         MOZ_CRASH("unknown return op");
     }
 
+    if (script()->isDerivedClassConstructor() &&
+        def->type() != MIRType_Object)
+    {
+        MOZ_ASSERT(info().funMaybeLazy() && info().funMaybeLazy()->isClassConstructor());
+        MCheckReturn* checkRet = MCheckReturn::New(alloc(), def, current->getSlot(info().thisSlot()));
+        current->add(checkRet);
+        def = checkRet;
+    }
+
     MReturn* ret = MReturn::New(alloc(), def);
     current->end(ret);
 
@@ -4919,7 +4954,7 @@ IonBuilder::inlineScriptedCall(CallInfo& callInfo, JSFunction* target)
 
     // Create new |this| on the caller-side for inlined constructors.
     if (callInfo.constructing()) {
-        MDefinition* thisDefn = createThis(target, callInfo.fun());
+        MDefinition* thisDefn = createThis(target, callInfo.fun(), callInfo.getNewTarget());
         if (!thisDefn)
             return false;
         callInfo.setThis(thisDefn);
@@ -6013,7 +6048,7 @@ IonBuilder::createCallObject(MDefinition* callee, MDefinition* scope)
 }
 
 MDefinition*
-IonBuilder::createThisScripted(MDefinition* callee)
+IonBuilder::createThisScripted(MDefinition* callee, MDefinition* newTarget)
 {
     // Get callee.prototype.
     //
@@ -6028,12 +6063,12 @@ IonBuilder::createThisScripted(MDefinition* callee)
     //       and thus invalidation.
     MInstruction* getProto;
     if (!invalidatedIdempotentCache()) {
-        MGetPropertyCache* getPropCache = MGetPropertyCache::New(alloc(), callee, names().prototype,
+        MGetPropertyCache* getPropCache = MGetPropertyCache::New(alloc(), newTarget, names().prototype,
                                                                  /* monitored = */ false);
         getPropCache->setIdempotent();
         getProto = getPropCache;
     } else {
-        MCallGetProperty* callGetProp = MCallGetProperty::New(alloc(), callee, names().prototype,
+        MCallGetProperty* callGetProp = MCallGetProperty::New(alloc(), newTarget, names().prototype,
                                                               /* callprop = */ false);
         callGetProp->setIdempotent();
         getProto = callGetProp;
@@ -6041,7 +6076,7 @@ IonBuilder::createThisScripted(MDefinition* callee)
     current->add(getProto);
 
     // Create this from prototype
-    MCreateThisWithProto* createThis = MCreateThisWithProto::New(alloc(), callee, getProto);
+    MCreateThisWithProto* createThis = MCreateThisWithProto::New(alloc(), callee, newTarget, getProto);
     current->add(createThis);
 
     return createThis;
@@ -6106,6 +6141,8 @@ IonBuilder::createThisScriptedBaseline(MDefinition* callee)
         return nullptr;
 
     JSObject* templateObject = inspector->getTemplateObject(pc);
+    if (!templateObject)
+        return nullptr;
     if (!templateObject->is<PlainObject>() && !templateObject->is<UnboxedPlainObject>())
         return nullptr;
 
@@ -6156,14 +6193,14 @@ IonBuilder::createThisScriptedBaseline(MDefinition* callee)
 }
 
 MDefinition*
-IonBuilder::createThis(JSFunction* target, MDefinition* callee)
+IonBuilder::createThis(JSFunction* target, MDefinition* callee, MDefinition* newTarget)
 {
     // Create |this| for unknown target.
     if (!target) {
         if (MDefinition* createThis = createThisScriptedBaseline(callee))
             return createThis;
 
-        MCreateThis* createThis = MCreateThis::New(alloc(), callee);
+        MCreateThis* createThis = MCreateThis::New(alloc(), callee, newTarget);
         current->add(createThis);
         return createThis;
     }
@@ -6178,6 +6215,11 @@ IonBuilder::createThis(JSFunction* target, MDefinition* callee)
         return magic;
     }
 
+    if (target->isDerivedClassConstructor()) {
+        MOZ_ASSERT(target->isClassConstructor());
+        return constant(MagicValue(JS_UNINITIALIZED_LEXICAL));
+    }
+
     // Try baking in the prototype.
     if (MDefinition* createThis = createThisScriptedSingleton(target, callee))
         return createThis;
@@ -6185,7 +6227,7 @@ IonBuilder::createThis(JSFunction* target, MDefinition* callee)
     if (MDefinition* createThis = createThisScriptedBaseline(callee))
         return createThis;
 
-    return createThisScripted(callee);
+    return createThisScripted(callee, newTarget);
 }
 
 bool
@@ -6575,7 +6617,7 @@ IonBuilder::makeCallHelper(JSFunction* target, CallInfo& callInfo)
 
     // Inline the constructor on the caller-side.
     if (callInfo.constructing()) {
-        MDefinition* create = createThis(target, callInfo.fun());
+        MDefinition* create = createThis(target, callInfo.fun(), callInfo.getNewTarget());
         if (!create) {
             abort("Failure inlining constructor for call.");
             return nullptr;
@@ -7945,6 +7987,17 @@ NumFixedSlots(JSObject* object)
     return gc::GetGCKindSlots(kind, object->getClass());
 }
 
+static bool
+IsUninitializedGlobalLexicalSlot(JSObject* obj, PropertyName* name)
+{
+    ClonedBlockObject &globalLexical = obj->as<ClonedBlockObject>();
+    MOZ_ASSERT(globalLexical.isGlobal());
+    Shape* shape = globalLexical.lookupPure(name);
+    if (!shape)
+        return false;
+    return globalLexical.getSlot(shape->slot()).isMagic(JS_UNINITIALIZED_LEXICAL);
+}
+
 bool
 IonBuilder::getStaticName(JSObject* staticObject, PropertyName* name, bool* psucceeded,
                           MDefinition* lexicalCheck)
@@ -7953,7 +8006,11 @@ IonBuilder::getStaticName(JSObject* staticObject, PropertyName* name, bool* psuc
 
     jsid id = NameToId(name);
 
-    MOZ_ASSERT(staticObject->is<GlobalObject>() || staticObject->is<CallObject>());
+    bool isGlobalLexical = staticObject->is<ClonedBlockObject>() &&
+                           staticObject->as<ClonedBlockObject>().isGlobal();
+    MOZ_ASSERT(isGlobalLexical ||
+               staticObject->is<GlobalObject>() ||
+               staticObject->is<CallObject>());
     MOZ_ASSERT(staticObject->isSingleton());
 
     *psucceeded = true;
@@ -7996,6 +8053,13 @@ IonBuilder::getStaticName(JSObject* staticObject, PropertyName* name, bool* psuc
     {
         // The property has been reconfigured as non-configurable, non-enumerable
         // or non-writable.
+        *psucceeded = false;
+        return true;
+    }
+
+    // Don't optimize global lexical bindings if they aren't initialized at
+    // compile time.
+    if (isGlobalLexical && IsUninitializedGlobalLexicalSlot(staticObject, name)) {
         *psucceeded = false;
         return true;
     }
@@ -8055,7 +8119,11 @@ IonBuilder::setStaticName(JSObject* staticObject, PropertyName* name)
 {
     jsid id = NameToId(name);
 
-    MOZ_ASSERT(staticObject->is<GlobalObject>() || staticObject->is<CallObject>());
+    bool isGlobalLexical = staticObject->is<ClonedBlockObject>() &&
+                           staticObject->as<ClonedBlockObject>().isGlobal();
+    MOZ_ASSERT(isGlobalLexical ||
+               staticObject->is<GlobalObject>() ||
+               staticObject->is<CallObject>());
 
     MDefinition* value = current->peek(-1);
 
@@ -8075,6 +8143,11 @@ IonBuilder::setStaticName(JSObject* staticObject, PropertyName* name)
     }
 
     if (!CanWriteProperty(alloc(), constraints(), property, value))
+        return jsop_setprop(name);
+
+    // Don't optimize global lexical bindings if they aren't initialized at
+    // compile time.
+    if (isGlobalLexical && IsUninitializedGlobalLexicalSlot(staticObject, name))
         return jsop_setprop(name);
 
     current->pop();
@@ -8098,15 +8171,52 @@ IonBuilder::setStaticName(JSObject* staticObject, PropertyName* name)
                      value, needsBarrier, slotType);
 }
 
+JSObject*
+IonBuilder::testGlobalLexicalBinding(PropertyName* name)
+{
+    MOZ_ASSERT(JSOp(*pc) == JSOP_BINDGNAME ||
+               JSOp(*pc) == JSOP_GETGNAME ||
+               JSOp(*pc) == JSOP_SETGNAME ||
+               JSOp(*pc) == JSOP_STRICTSETGNAME);
+
+    // The global isn't the global lexical scope's prototype, but its
+    // enclosing scope. Test for the existence of |name| manually on the
+    // global lexical scope. If it is not found, look for it on the global
+    // itself.
+
+    NativeObject* obj = &script()->global().lexicalScope();
+    TypeSet::ObjectKey* lexicalKey = TypeSet::ObjectKey::get(obj);
+    jsid id = NameToId(name);
+    if (analysisContext)
+        lexicalKey->ensureTrackedProperty(analysisContext, id);
+    if (!lexicalKey->unknownProperties()) {
+        // If the property is not found on the global lexical scope but it is
+        // found on the global and is configurable, freeze the typeset for its
+        // non-existence.
+        //
+        // In the case that it is found on the global but is non-configurable,
+        // the binding cannot be shadowed by a global lexical binding.
+        HeapTypeSetKey lexicalProperty = lexicalKey->property(id);
+        if (!obj->containsPure(name)) {
+            Shape* shape = script()->global().lookupPure(name);
+            if (!shape || !shape->configurable())
+                MOZ_ALWAYS_FALSE(lexicalProperty.isOwnProperty(constraints()));
+            obj = &script()->global();
+        }
+    }
+
+    return obj;
+}
+
 bool
 IonBuilder::jsop_getgname(PropertyName* name)
 {
-    JSObject* obj = &script()->global();
+    JSObject* obj = testGlobalLexicalBinding(name);
     bool emitted = false;
     if (!getStaticName(obj, name, &emitted) || emitted)
         return emitted;
 
-    if (!forceInlineCaches()) {
+    if (!forceInlineCaches() && obj->is<GlobalObject>()) {
         TemporaryTypeSet* types = bytecodeTypes(pc);
         MDefinition* globalObj = constant(ObjectValue(*obj));
         if (!getPropTryCommonGetter(&emitted, globalObj, name, types) || emitted)
@@ -8121,7 +8231,7 @@ IonBuilder::jsop_getname(PropertyName* name)
 {
     MDefinition* object;
     if (IsGlobalOp(JSOp(*pc)) && !script()->hasNonSyntacticScope()) {
-        MInstruction* global = constant(ObjectValue(script()->global()));
+        MInstruction* global = constant(ObjectValue(script()->global().lexicalScope()));
         object = global;
     } else {
         current->push(current->scopeChain());
@@ -12560,16 +12670,12 @@ IonBuilder::jsop_setarg(uint32_t arg)
 bool
 IonBuilder::jsop_defvar(uint32_t index)
 {
-    MOZ_ASSERT(JSOp(*pc) == JSOP_DEFVAR || JSOp(*pc) == JSOP_DEFCONST);
+    MOZ_ASSERT(JSOp(*pc) == JSOP_DEFVAR);
 
     PropertyName* name = script()->getName(index);
 
     // Bake in attrs.
-    unsigned attrs = JSPROP_ENUMERATE;
-    if (JSOp(*pc) == JSOP_DEFCONST)
-        attrs |= JSPROP_READONLY;
-    else
-        attrs |= JSPROP_PERMANENT;
+    unsigned attrs = JSPROP_ENUMERATE | JSPROP_PERMANENT;
     MOZ_ASSERT(!script()->isForEval());
 
     // Pass the ScopeChain.
@@ -12580,6 +12686,23 @@ IonBuilder::jsop_defvar(uint32_t index)
     current->add(defvar);
 
     return resumeAfter(defvar);
+}
+
+bool
+IonBuilder::jsop_deflexical(uint32_t index)
+{
+    MOZ_ASSERT(!script()->hasNonSyntacticScope());
+    MOZ_ASSERT(JSOp(*pc) == JSOP_DEFLET || JSOp(*pc) == JSOP_DEFCONST);
+
+    PropertyName* name = script()->getName(index);
+    unsigned attrs = JSPROP_ENUMERATE | JSPROP_PERMANENT;
+    if (JSOp(*pc) == JSOP_DEFCONST)
+        attrs |= JSPROP_READONLY;
+
+    MDefLexical* deflex = MDefLexical::New(alloc(), name, attrs);
+    current->add(deflex);
+
+    return resumeAfter(deflex);
 }
 
 bool
@@ -12643,9 +12766,21 @@ IonBuilder::jsop_this()
 
     if (script()->strict() || info().funMaybeLazy()->isSelfHostedBuiltin()) {
         // No need to wrap primitive |this| in strict mode or self-hosted code.
-        current->pushSlot(info().thisSlot());
+        MDefinition* thisVal = current->getSlot(info().thisSlot());
+        if (script()->isDerivedClassConstructor()) {
+            MOZ_ASSERT(info().funMaybeLazy()->isClassConstructor());
+            MOZ_ASSERT(script()->strict());
+
+            MLexicalCheck* checkThis = MLexicalCheck::New(alloc(), thisVal, Bailout_UninitializedThis);
+            current->add(checkThis);
+            thisVal = checkThis;
+        }
+
+        current->push(thisVal);
         return true;
     }
+
+    MOZ_ASSERT(!info().funMaybeLazy()->isClassConstructor());
 
     if (thisTypes && (thisTypes->getKnownMIRType() == MIRType_Object ||
         (thisTypes->empty() && baselineFrame_ && baselineFrame_->thisType.isSomeObject())))

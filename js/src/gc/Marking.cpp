@@ -341,46 +341,6 @@ AssertRootMarkingPhase(JSTracer* trc)
 
 /*** Tracing Interface ***************************************************************************/
 
-#define FOR_EACH_GC_POINTER_TYPE(D) \
-    D(AccessorShape*) \
-    D(BaseShape*) \
-    D(UnownedBaseShape*) \
-    D(jit::JitCode*) \
-    D(NativeObject*) \
-    D(ArrayObject*) \
-    D(ArgumentsObject*) \
-    D(ArrayBufferObject*) \
-    D(ArrayBufferObjectMaybeShared*) \
-    D(ArrayBufferViewObject*) \
-    D(DebugScopeObject*) \
-    D(GlobalObject*) \
-    D(JSObject*) \
-    D(JSFunction*) \
-    D(ModuleObject*) \
-    D(ModuleEnvironmentObject*) \
-    D(NestedScopeObject*) \
-    D(PlainObject*) \
-    D(SavedFrame*) \
-    D(ScopeObject*) \
-    D(ScriptSourceObject*) \
-    D(SharedArrayBufferObject*) \
-    D(SharedTypedArrayObject*) \
-    D(ImportEntryObject*) \
-    D(ExportEntryObject*) \
-    D(JSScript*) \
-    D(LazyScript*) \
-    D(Shape*) \
-    D(JSAtom*) \
-    D(JSString*) \
-    D(JSFlatString*) \
-    D(JSLinearString*) \
-    D(PropertyName*) \
-    D(JS::Symbol*) \
-    D(js::ObjectGroup*) \
-    D(Value) \
-    D(jsid) \
-    D(TaggedProto)
-
 // The second parameter to BaseGCType is derived automatically based on T. The
 // relation here is that for any T, the TraceKind will automatically,
 // statically select the correct Cell layout for marking. Below, we instantiate
@@ -427,12 +387,14 @@ template <typename T> void DispatchToTracer(JSTracer* trc, T* thingp, const char
 template <typename T> T DoCallback(JS::CallbackTracer* trc, T* thingp, const char* name);
 template <typename T> void DoMarking(GCMarker* gcmarker, T* thing);
 template <typename T> void DoMarking(GCMarker* gcmarker, T thing);
+template <typename T> void NoteWeakEdge(GCMarker* gcmarker, T** thingp);
+template <typename T> void NoteWeakEdge(GCMarker* gcmarker, T* thingp);
 
 template <typename T>
 void
-js::TraceEdge(JSTracer* trc, BarrieredBase<T>* thingp, const char* name)
+js::TraceEdge(JSTracer* trc, WriteBarrieredBase<T>* thingp, const char* name)
 {
-    DispatchToTracer(trc, ConvertToBase(thingp->unsafeGet()), name);
+    DispatchToTracer(trc, ConvertToBase(thingp->unsafeUnbarrieredForTracing()), name);
 }
 
 template <typename T>
@@ -440,6 +402,18 @@ void
 js::TraceManuallyBarrieredEdge(JSTracer* trc, T* thingp, const char* name)
 {
     DispatchToTracer(trc, ConvertToBase(thingp), name);
+}
+
+template <typename T>
+void
+js::TraceWeakEdge(JSTracer* trc, WeakRef<T>* thingp, const char* name)
+{
+    // Non-marking tracers treat the edge strongly.
+    if (!trc->isMarkingTracer())
+        DispatchToTracer(trc, ConvertToBase(thingp->unsafeUnbarrieredForTracing()), name);
+
+    NoteWeakEdge(static_cast<GCMarker*>(trc),
+                 ConvertToBase(thingp->unsafeUnbarrieredForTracing()));
 }
 
 template <typename T>
@@ -461,12 +435,12 @@ js::TraceNullableRoot(JSTracer* trc, T* thingp, const char* name)
 
 template <typename T>
 void
-js::TraceRange(JSTracer* trc, size_t len, BarrieredBase<T>* vec, const char* name)
+js::TraceRange(JSTracer* trc, size_t len, WriteBarrieredBase<T>* vec, const char* name)
 {
     JS::AutoTracingIndex index(trc);
     for (auto i : MakeRange(len)) {
         if (InternalGCMethods<T>::isMarkable(vec[i].get()))
-            DispatchToTracer(trc, ConvertToBase(vec[i].unsafeGet()), name);
+            DispatchToTracer(trc, ConvertToBase(vec[i].unsafeUnbarrieredForTracing()), name);
         ++index;
     }
 }
@@ -486,11 +460,12 @@ js::TraceRootRange(JSTracer* trc, size_t len, T* vec, const char* name)
 
 // Instantiate a copy of the Tracing templates for each derived type.
 #define INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS(type) \
-    template void js::TraceEdge<type>(JSTracer*, BarrieredBase<type>*, const char*); \
+    template void js::TraceEdge<type>(JSTracer*, WriteBarrieredBase<type>*, const char*); \
     template void js::TraceManuallyBarrieredEdge<type>(JSTracer*, type*, const char*); \
+    template void js::TraceWeakEdge<type>(JSTracer*, WeakRef<type>*, const char*); \
     template void js::TraceRoot<type>(JSTracer*, type*, const char*); \
     template void js::TraceNullableRoot<type>(JSTracer*, type*, const char*); \
-    template void js::TraceRange<type>(JSTracer*, size_t, BarrieredBase<type>*, const char*); \
+    template void js::TraceRange<type>(JSTracer*, size_t, WriteBarrieredBase<type>*, const char*); \
     template void js::TraceRootRange<type>(JSTracer*, size_t, type*, const char*);
 FOR_EACH_GC_POINTER_TYPE(INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS)
 #undef INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS
@@ -510,13 +485,14 @@ template void js::TraceManuallyBarrieredCrossCompartmentEdge<JSScript*>(JSTracer
 
 template <typename T>
 void
-js::TraceCrossCompartmentEdge(JSTracer* trc, JSObject* src, BarrieredBase<T>* dst, const char* name)
+js::TraceCrossCompartmentEdge(JSTracer* trc, JSObject* src, WriteBarrieredBase<T>* dst,
+                              const char* name)
 {
     if (ShouldMarkCrossCompartment(trc, src, dst->get()))
-        DispatchToTracer(trc, dst->unsafeGet(), name);
+        DispatchToTracer(trc, dst->unsafeUnbarrieredForTracing(), name);
 }
-template void js::TraceCrossCompartmentEdge<Value>(JSTracer*, JSObject*, BarrieredBase<Value>*,
-                                                   const char*);
+template void js::TraceCrossCompartmentEdge<Value>(JSTracer*, JSObject*,
+                                                   WriteBarrieredBase<Value>*, const char*);
 
 template <typename T>
 void
@@ -744,6 +720,47 @@ DoMarking(GCMarker* gcmarker, T thing)
     DispatchTyped(DoMarkingFunctor<T>(), thing, gcmarker);
 }
 
+template <typename T>
+void
+NoteWeakEdge(GCMarker* gcmarker, T** thingp)
+{
+    // Do per-type marking precondition checks.
+    if (MustSkipMarking(*thingp))
+        return;
+
+    CheckTracedThing(gcmarker, *thingp);
+
+    // If the target is already marked, there's no need to store the edge.
+    if (IsMarkedUnbarriered(thingp))
+        return;
+
+    gcmarker->noteWeakEdge(thingp);
+}
+
+template <typename T>
+void
+NoteWeakEdge(GCMarker* gcmarker, T* thingp)
+{
+    MOZ_CRASH("the gc does not support tagged pointers as weak edges");
+}
+
+template <typename T>
+void
+js::GCMarker::noteWeakEdge(T* edge)
+{
+    static_assert(IsBaseOf<Cell, typename mozilla::RemovePointer<T>::Type>::value,
+                  "edge must point to a GC pointer");
+    MOZ_ASSERT((*edge)->isTenured());
+
+    // Note: we really want the *source* Zone here. The edge may start in a
+    // non-gc heap location, however, so we use the fact that cross-zone weak
+    // references are not allowed and use the *target's* zone.
+    JS::Zone::WeakEdges &weakRefs = (*edge)->asTenured().zone()->gcWeakRefs;
+    AutoEnterOOMUnsafeRegion oomUnsafe;
+    if (!weakRefs.append(reinterpret_cast<TenuredCell**>(edge)))
+        oomUnsafe.crash("Failed to record a weak edge for sweeping.");
+}
+
 // The simplest traversal calls out to the fully generic traceChildren function
 // to visit the child edges. In the absence of other traversal mechanisms, this
 // function will rapidly grow the stack past its bounds and crash the process.
@@ -866,6 +883,9 @@ js::GCMarker::mark(T* thing)
 void
 LazyScript::traceChildren(JSTracer* trc)
 {
+    if (script_)
+        TraceWeakEdge(trc, &script_, "script");
+
     if (function_)
         TraceEdge(trc, &function_, "function");
 
@@ -889,6 +909,9 @@ LazyScript::traceChildren(JSTracer* trc)
 inline void
 js::GCMarker::eagerlyMarkChildren(LazyScript *thing)
 {
+    if (thing->script_)
+        noteWeakEdge(thing->script_.unsafeUnbarrieredForTracing());
+
     if (thing->function_)
         traverseEdge(thing, static_cast<JSObject*>(thing->function_));
 
@@ -1933,8 +1956,8 @@ js::gc::StoreBuffer::SlotsEdge::trace(TenuringTracer& mover) const
         int32_t initLen = obj->getDenseInitializedLength();
         int32_t clampedStart = Min(start_, initLen);
         int32_t clampedEnd = Min(start_ + count_, initLen);
-        mover.traceSlots(static_cast<HeapSlot*>(obj->getDenseElements() + clampedStart)->unsafeGet(),
-                         clampedEnd - clampedStart);
+        mover.traceSlots(static_cast<HeapSlot*>(obj->getDenseElements() + clampedStart)
+                            ->unsafeUnbarrieredForTracing(), clampedEnd - clampedStart);
     } else {
         int32_t start = Min(uint32_t(start_), obj->slotSpan());
         int32_t end = Min(uint32_t(start_) + count_, obj->slotSpan());
@@ -2071,7 +2094,7 @@ js::TenuringTracer::traceObject(JSObject* obj)
         !nobj->denseElementsAreCopyOnWrite() &&
         ObjectDenseElementsMayBeMarkable(nobj))
     {
-        Value* elems = static_cast<HeapSlot*>(nobj->getDenseElements())->unsafeGet();
+        Value* elems = static_cast<HeapSlot*>(nobj->getDenseElements())->unsafeUnbarrieredForTracing();
         traceSlots(elems, elems + nobj->getDenseInitializedLength());
     }
 
@@ -2087,9 +2110,9 @@ js::TenuringTracer::traceObjectSlots(NativeObject* nobj, uint32_t start, uint32_
     HeapSlot* dynEnd;
     nobj->getSlotRange(start, length, &fixedStart, &fixedEnd, &dynStart, &dynEnd);
     if (fixedStart)
-        traceSlots(fixedStart->unsafeGet(), fixedEnd->unsafeGet());
+        traceSlots(fixedStart->unsafeUnbarrieredForTracing(), fixedEnd->unsafeUnbarrieredForTracing());
     if (dynStart)
-        traceSlots(dynStart->unsafeGet(), dynEnd->unsafeGet());
+        traceSlots(dynStart->unsafeUnbarrieredForTracing(), dynEnd->unsafeUnbarrieredForTracing());
 }
 
 void
@@ -2299,6 +2322,17 @@ IsMarkedInternal(T* thingp)
     return rv;
 }
 
+bool
+js::gc::IsAboutToBeFinalizedDuringSweep(TenuredCell& tenured)
+{
+    MOZ_ASSERT(!IsInsideNursery(&tenured));
+    MOZ_ASSERT(!tenured.runtimeFromAnyThread()->isHeapMinorCollecting());
+    MOZ_ASSERT(tenured.zoneFromAnyThread()->isGCSweeping());
+    if (tenured.arenaHeader()->allocatedDuringIncremental)
+        return false;
+    return !tenured.isMarked();
+}
+
 template <typename T>
 static bool
 IsAboutToBeFinalizedInternal(T** thingp)
@@ -2321,11 +2355,8 @@ IsAboutToBeFinalizedInternal(T** thingp)
 
     Zone* zone = thing->asTenured().zoneFromAnyThread();
     if (zone->isGCSweeping()) {
-        if (thing->asTenured().arenaHeader()->allocatedDuringIncremental)
-            return false;
-        return !thing->asTenured().isMarked();
-    }
-    else if (zone->isGCCompacting() && IsForwarded(thing)) {
+        return IsAboutToBeFinalizedDuringSweep(thing->asTenured());
+    } else if (zone->isGCCompacting() && IsForwarded(thing)) {
         *thingp = Forwarded(thing);
         return false;
     }
@@ -2362,16 +2393,9 @@ IsMarkedUnbarriered(T* thingp)
 
 template <typename T>
 bool
-IsMarked(BarrieredBase<T>* thingp)
+IsMarked(WriteBarrieredBase<T>* thingp)
 {
-    return IsMarkedInternal(ConvertToBase(thingp->unsafeGet()));
-}
-
-template <typename T>
-bool
-IsMarked(ReadBarriered<T>* thingp)
-{
-    return IsMarkedInternal(ConvertToBase(thingp->unsafeGet()));
+    return IsMarkedInternal(ConvertToBase(thingp->unsafeUnbarrieredForTracing()));
 }
 
 template <typename T>
@@ -2383,26 +2407,25 @@ IsAboutToBeFinalizedUnbarriered(T* thingp)
 
 template <typename T>
 bool
-IsAboutToBeFinalized(BarrieredBase<T>* thingp)
+IsAboutToBeFinalized(WriteBarrieredBase<T>* thingp)
 {
-    return IsAboutToBeFinalizedInternal(ConvertToBase(thingp->unsafeGet()));
+    return IsAboutToBeFinalizedInternal(ConvertToBase(thingp->unsafeUnbarrieredForTracing()));
 }
 
 template <typename T>
 bool
-IsAboutToBeFinalized(ReadBarriered<T>* thingp)
+IsAboutToBeFinalized(ReadBarrieredBase<T>* thingp)
 {
-    return IsAboutToBeFinalizedInternal(ConvertToBase(thingp->unsafeGet()));
+    return IsAboutToBeFinalizedInternal(ConvertToBase(thingp->unsafeUnbarrieredForTracing()));
 }
 
 // Instantiate a copy of the Tracing templates for each derived type.
 #define INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS(type) \
     template bool IsMarkedUnbarriered<type>(type*); \
-    template bool IsMarked<type>(BarrieredBase<type>*); \
-    template bool IsMarked<type>(ReadBarriered<type>*); \
+    template bool IsMarked<type>(WriteBarrieredBase<type>*); \
     template bool IsAboutToBeFinalizedUnbarriered<type>(type*); \
-    template bool IsAboutToBeFinalized<type>(BarrieredBase<type>*); \
-    template bool IsAboutToBeFinalized<type>(ReadBarriered<type>*);
+    template bool IsAboutToBeFinalized<type>(WriteBarrieredBase<type>*); \
+    template bool IsAboutToBeFinalized<type>(ReadBarrieredBase<type>*);
 FOR_EACH_GC_POINTER_TYPE(INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS)
 #undef INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS
 

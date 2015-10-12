@@ -2,15 +2,12 @@
 // application versions
 const PREF_SYSTEM_ADDON_SET = "extensions.systemAddonSet";
 
-// Enable signature checks for these tests
-Services.prefs.setBoolPref(PREF_XPI_SIGNATURES_REQUIRED, true);
-
 BootstrapMonitor.init();
 
 const featureDir = FileUtils.getDir("ProfD", ["features"]);
 
 // Build the test sets
-let dir = FileUtils.getDir("ProfD", ["sysfeatures", "app1"], true);
+var dir = FileUtils.getDir("ProfD", ["sysfeatures", "app1"], true);
 do_get_file("data/system_addons/system1_1.xpi").copyTo(dir, "system1@tests.mozilla.org.xpi");
 do_get_file("data/system_addons/system2_1.xpi").copyTo(dir, "system2@tests.mozilla.org.xpi");
 
@@ -60,7 +57,9 @@ function* check_installed(inProfile, ...versions) {
       do_check_true(uri instanceof AM_Ci.nsIFileURL);
       do_check_eq(uri.file.path, file.path);
 
-      do_check_eq(addon.signedState, AddonManager.SIGNEDSTATE_SYSTEM);
+      if (inProfile) {
+        do_check_eq(addon.signedState, AddonManager.SIGNEDSTATE_SYSTEM);
+      }
 
       // Verify the add-on actually started
       BootstrapMonitor.checkAddonStarted(id, versions[i]);
@@ -170,6 +169,27 @@ add_task(function* test_updated() {
   yield promiseShutdownManager();
 });
 
+// Entering safe mode should disable the updated system add-ons and use the
+// default system add-ons
+add_task(function* safe_mode_disabled() {
+  gAppInfo.inSafeMode = true;
+  startupManager(false);
+
+  yield check_installed(false, "1.0", "1.0", null);
+
+  yield promiseShutdownManager();
+});
+
+// Leaving safe mode should re-enable the updated system add-ons
+add_task(function* normal_mode_enabled() {
+  gAppInfo.inSafeMode = false;
+  startupManager(false);
+
+  yield check_installed(true, null, "1.0", "1.0");
+
+  yield promiseShutdownManager();
+});
+
 // An additional add-on in the directory should be ignored
 add_task(function* test_skips_additional() {
   // Copy in the system add-ons
@@ -252,19 +272,18 @@ add_task(function* test_bad_profile_cert() {
   yield promiseShutdownManager();
 });
 
-// Switching to app defaults that contain a bad certificate should ignore the
-// bad add-on
+// Switching to app defaults that contain a bad certificate should still work
 add_task(function* test_bad_app_cert() {
   gAppInfo.version = "3";
   distroDir.leafName = "app3";
   startupManager();
 
-  // Add-on will still be present just not active
+  // Add-on will still be present
   let addon = yield promiseAddonByID("system1@tests.mozilla.org");
   do_check_neq(addon, null);
   do_check_eq(addon.signedState, AddonManager.SIGNEDSTATE_BROKEN);
 
-  yield check_installed(false, null, null, "1.0");
+  yield check_installed(false, "1.0", null, "1.0");
 
   yield promiseShutdownManager();
 });

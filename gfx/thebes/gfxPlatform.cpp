@@ -1501,12 +1501,12 @@ gfxPlatform::TransformPixel(const Color& in, Color& out, qcms_transform *transfo
         out = Color::FromABGR(packed);
 #else
         /* ARGB puts the bytes in |ARGB| order on big endian */
-        uint32_t packed = in.ToARGB();
+        uint32_t packed = in.UnusualToARGB();
         /* add one to move past the alpha byte */
         qcms_transform_data(transform,
                        (uint8_t *)&packed + 1, (uint8_t *)&packed + 1,
                        1);
-        out = Color::FromARGB(packed);
+        out = Color::UnusualFromARGB(packed);
 #endif
     }
 
@@ -2124,6 +2124,10 @@ gfxPlatform::GetApzSupportInfo(mozilla::widget::InfoObject& aObj)
   if (SupportsApzTouchInput()) {
     aObj.DefineProperty("ApzTouchInput", 1);
   }
+
+  if (SupportsApzDragInput()) {
+    aObj.DefineProperty("ApzDragInput", 1);
+  }
 }
 
 /*static*/ bool
@@ -2153,13 +2157,9 @@ gfxPlatform::PerfWarnings()
   return gfxPrefs::PerfWarnings();
 }
 
-void
-gfxPlatform::GetAcceleratedCompositorBackends(nsTArray<LayersBackend>& aBackends)
+static inline bool
+AllowOpenGL(bool* aWhitelisted)
 {
-  // Being whitelisted is not enough to accelerate, but not being whitelisted is
-  // enough not to:
-  bool whitelisted = false;
-
   nsCOMPtr<nsIGfxInfo> gfxInfo = do_GetService("@mozilla.org/gfx/info;1");
   if (gfxInfo) {
     // bug 655578: on X11 at least, we must always call GetData (even if we don't need that information)
@@ -2171,10 +2171,24 @@ gfxPlatform::GetAcceleratedCompositorBackends(nsTArray<LayersBackend>& aBackends
     int32_t status;
     if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_OPENGL_LAYERS, &status))) {
       if (status == nsIGfxInfo::FEATURE_STATUS_OK) {
-        aBackends.AppendElement(LayersBackend::LAYERS_OPENGL);
-        whitelisted = true;
+        *aWhitelisted = true;
+        return true;
       }
     }
+  }
+
+  return gfxPrefs::LayersAccelerationForceEnabled();
+}
+
+void
+gfxPlatform::GetAcceleratedCompositorBackends(nsTArray<LayersBackend>& aBackends)
+{
+  // Being whitelisted is not enough to accelerate, but not being whitelisted is
+  // enough not to:
+  bool whitelisted = false;
+
+  if (AllowOpenGL(&whitelisted)) {
+    aBackends.AppendElement(LayersBackend::LAYERS_OPENGL);
   }
 
   if (!whitelisted) {
@@ -2208,7 +2222,10 @@ gfxPlatform::NotifyCompositorCreated(LayersBackend aBackend)
     return;
   }
 
-  NS_ASSERTION(mCompositorBackend == LayersBackend::LAYERS_NONE, "Compositor backend changed.");
+  if (mCompositorBackend != LayersBackend::LAYERS_NONE) {
+    gfxCriticalNote << "Compositors might be mixed ("
+      << int(mCompositorBackend) << "," << int(aBackend) << ")";
+  }
 
   // Set the backend before we notify so it's available immediately.
   mCompositorBackend = aBackend;
@@ -2240,4 +2257,10 @@ gfxPlatform::UpdateDeviceInitData()
   mozilla::dom::ContentChild::GetSingleton()->SendGetGraphicsDeviceInitData(&data);
 
   SetDeviceInitData(data);
+}
+
+bool
+gfxPlatform::SupportsApzDragInput() const
+{
+  return gfxPrefs::APZDragEnabled();
 }

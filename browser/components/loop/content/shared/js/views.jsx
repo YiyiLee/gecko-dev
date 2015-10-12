@@ -120,10 +120,12 @@ loop.shared.views = (function(_, mozL10n) {
 
     _handleShareTabs: function() {
       this._startScreenShare("browser");
+      this.hideDropdownMenu();
     },
 
     _handleShareWindows: function() {
       this._startScreenShare("window");
+      this.hideDropdownMenu();
     },
 
     _getTitle: function() {
@@ -163,7 +165,7 @@ loop.shared.views = (function(_, mozL10n) {
         <div>
           <button className={screenShareClasses}
                   onClick={this.handleClick}
-                  ref="menu-button"
+                  ref="anchor"
                   title={this._getTitle()}>
             {isActive ? null : <span className="chevron"/>}
           </button>
@@ -376,7 +378,8 @@ loop.shared.views = (function(_, mozL10n) {
         audio: {enabled: true, visible: true},
         screenShare: {state: SCREEN_SHARE_STATES.INACTIVE, visible: false},
         settingsMenuItems: null,
-        enableHangup: true
+        enableHangup: true,
+        showHangup: true
       };
     },
 
@@ -397,6 +400,7 @@ loop.shared.views = (function(_, mozL10n) {
       screenShare: React.PropTypes.object,
       settingsMenuItems: React.PropTypes.array,
       show: React.PropTypes.bool.isRequired,
+      showHangup: React.PropTypes.bool,
       video: React.PropTypes.object.isRequired
     },
 
@@ -493,14 +497,17 @@ loop.shared.views = (function(_, mozL10n) {
       });
       return (
         <ul className={conversationToolbarCssClasses}>
-          <li className="conversation-toolbar-btn-box btn-hangup-entry">
-            <button className="btn btn-hangup"
-                    disabled={!this.props.enableHangup}
-                    onClick={this.handleClickHangup}
-                    title={mozL10n.get("hangup_button_title")}>
-              {this._getHangupButtonLabel()}
-            </button>
-          </li>
+          {
+            this.props.showHangup ?
+            <li className="conversation-toolbar-btn-box btn-hangup-entry">
+              <button className="btn btn-hangup"
+                      disabled={!this.props.enableHangup}
+                      onClick={this.handleClickHangup}
+                      title={mozL10n.get("hangup_button_title")}>
+                {this._getHangupButtonLabel()}
+              </button>
+            </li> : null
+          }
           <li className="conversation-toolbar-btn-box">
             <div className={mediaButtonGroupCssClasses}>
                 <MediaControlButton action={this.handleToggleVideo}
@@ -1111,7 +1118,6 @@ loop.shared.views = (function(_, mozL10n) {
               { this.state.localMediaAboslutelyPositioned ?
                 this.renderLocalVideo() : null }
               { this.props.children }
-
             </div>
             <div className={screenShareStreamClasses}>
               <MediaView displayAvatar={false}

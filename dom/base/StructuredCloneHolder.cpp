@@ -383,8 +383,7 @@ StructuredCloneHolder::FreeBuffer(uint64_t* aBuffer,
 /* static */ JSObject*
 StructuredCloneHolder::ReadFullySerializableObjects(JSContext* aCx,
                                                     JSStructuredCloneReader* aReader,
-                                                    uint32_t aTag,
-                                                    uint32_t aIndex)
+                                                    uint32_t aTag)
 {
   if (aTag == SCTAG_DOM_IMAGEDATA) {
     return ReadStructuredCloneImageData(aCx, aReader);
@@ -416,54 +415,19 @@ StructuredCloneHolder::ReadFullySerializableObjects(JSContext* aCx,
   if (aTag == SCTAG_DOM_NULL_PRINCIPAL ||
       aTag == SCTAG_DOM_SYSTEM_PRINCIPAL ||
       aTag == SCTAG_DOM_CONTENT_PRINCIPAL) {
-    if (!NS_IsMainThread()) {
+    JSPrincipals* prin;
+    if (!nsJSPrincipals::ReadKnownPrincipalType(aCx, aReader, aTag, &prin)) {
       return nullptr;
     }
-
-    mozilla::ipc::PrincipalInfo info;
-    if (aTag == SCTAG_DOM_SYSTEM_PRINCIPAL) {
-      info = mozilla::ipc::SystemPrincipalInfo();
-    } else if (aTag == SCTAG_DOM_NULL_PRINCIPAL) {
-      info = mozilla::ipc::NullPrincipalInfo();
-    } else {
-      uint32_t appId = aIndex;
-
-      uint32_t isInBrowserElement, specLength;
-      if (!JS_ReadUint32Pair(aReader, &isInBrowserElement, &specLength)) {
-        return nullptr;
-      }
-
-      uint32_t signedPkgLength, dummy;
-      if (!JS_ReadUint32Pair(aReader, &signedPkgLength, &dummy)) {
-        return nullptr;
-      }
-
-      nsAutoCString spec;
-      spec.SetLength(specLength);
-      if (!JS_ReadBytes(aReader, spec.BeginWriting(), specLength)) {
-        return nullptr;
-      }
-
-      nsAutoCString signedPkg;
-      signedPkg.SetLength(signedPkgLength);
-      if (!JS_ReadBytes(aReader, signedPkg.BeginWriting(), signedPkgLength)) {
-        return nullptr;
-      }
-
-      info = mozilla::ipc::ContentPrincipalInfo(appId, isInBrowserElement,
-                                                spec, signedPkg);
-    }
-
-    nsresult rv;
-    nsCOMPtr<nsIPrincipal> principal = PrincipalInfoToPrincipal(info, &rv);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      xpc::Throw(aCx, NS_ERROR_DOM_DATA_CLONE_ERR);
-      return nullptr;
-    }
+    // nsJSPrincipals::ReadKnownPrincipalType addrefs for us, but because of the
+    // casting between JSPrincipals* and nsIPrincipal* we can't use
+    // getter_AddRefs above and have to already_AddRefed here.
+    nsCOMPtr<nsIPrincipal> principal = already_AddRefed<nsIPrincipal>(nsJSPrincipals::get(prin));
 
     JS::RootedValue result(aCx);
-    rv = nsContentUtils::WrapNative(aCx, principal, &NS_GET_IID(nsIPrincipal),
-                                    &result);
+    nsresult rv = nsContentUtils::WrapNative(aCx, principal,
+                                             &NS_GET_IID(nsIPrincipal),
+                                             &result);
     if (NS_FAILED(rv)) {
       xpc::Throw(aCx, NS_ERROR_DOM_DATA_CLONE_ERR);
       return nullptr;
@@ -563,28 +527,8 @@ StructuredCloneHolder::WriteFullySerializableObjects(JSContext* aCx,
     nsCOMPtr<nsISupports> base = xpc::UnwrapReflectorToISupports(aObj);
     nsCOMPtr<nsIPrincipal> principal = do_QueryInterface(base);
     if (principal) {
-      mozilla::ipc::PrincipalInfo info;
-      if (NS_WARN_IF(NS_FAILED(PrincipalToPrincipalInfo(principal, &info)))) {
-        xpc::Throw(aCx, NS_ERROR_DOM_DATA_CLONE_ERR);
-        return false;
-      }
-
-      if (info.type() == mozilla::ipc::PrincipalInfo::TNullPrincipalInfo) {
-        return JS_WriteUint32Pair(aWriter, SCTAG_DOM_NULL_PRINCIPAL, 0);
-      }
-      if (info.type() == mozilla::ipc::PrincipalInfo::TSystemPrincipalInfo) {
-        return JS_WriteUint32Pair(aWriter, SCTAG_DOM_SYSTEM_PRINCIPAL, 0);
-      }
-
-      MOZ_ASSERT(info.type() == mozilla::ipc::PrincipalInfo::TContentPrincipalInfo);
-      const mozilla::ipc::ContentPrincipalInfo& cInfo = info;
-      return JS_WriteUint32Pair(aWriter, SCTAG_DOM_CONTENT_PRINCIPAL,
-                                cInfo.appId()) &&
-             JS_WriteUint32Pair(aWriter, cInfo.isInBrowserElement(),
-                                cInfo.spec().Length()) &&
-             JS_WriteUint32Pair(aWriter, cInfo.signedPkg().Length(), 0) &&
-             JS_WriteBytes(aWriter, cInfo.spec().get(), cInfo.spec().Length()) &&
-             JS_WriteBytes(aWriter, cInfo.signedPkg().get(), cInfo.signedPkg().Length());
+      auto nsjsprincipals = nsJSPrincipals::get(principal);
+      return nsjsprincipals->write(aCx, aWriter);
     }
   }
 
@@ -983,7 +927,7 @@ StructuredCloneHolder::CustomReadHandler(JSContext* aCx,
                                             parent, GetImages(), aIndex);
    }
 
-  return ReadFullySerializableObjects(aCx, aReader, aTag, aIndex);
+  return ReadFullySerializableObjects(aCx, aReader, aTag);
 }
 
 bool

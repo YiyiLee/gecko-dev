@@ -98,12 +98,6 @@
   -moz-appearance: -moz-window-titlebar;
 }
 
-@media (-moz-mac-yosemite-theme) {
-  #main-window:not(:-moz-lwtheme) > #titlebar {
-    -moz-appearance: -moz-mac-vibrancy-light;
-  }
-}
-
 #main-window:not([tabsintitlebar]) > #titlebar {
   height: 22px; /* The native titlebar on OS X is 22px tall. */
 }
@@ -1702,7 +1696,7 @@ toolbarbutton[constrain-size="true"][cui-areatype="toolbar"] > .toolbarbutton-ba
   transition: opacity 0.15s ease;
 }
 
-#urlbar:not(:hover) > .urlbar-textbox-container > .urlbar-history-dropmarker {
+#navigator-toolbox:not(:hover) .urlbar-history-dropmarker {
   opacity: 0;
 }
 
@@ -1904,8 +1898,7 @@ richlistitem[type~="action"][actiontype="switchtab"][selected="true"] > .ac-url-
   margin: 0;
   list-style-image: url("chrome://browser/skin/reload-stop-go.png");
   padding: 0 9px;
-  margin-inline-start: 2px;
-  border-inline-end-style: none;
+  margin-inline-start: 5px;
   border-inline-start: 1px solid var(--urlbar-separator-color);
   border-image: linear-gradient(transparent 15%,
                                 var(--urlbar-separator-color) 15%,
@@ -3290,7 +3283,7 @@ notification[value="loop-sharing-notification"] .messageImage {
 }
 
 #sync-start-panel-subtitle {
-  margin: 0;
+  margin-bottom: 0;
 }
 
 /* Status panel */
@@ -3437,43 +3430,6 @@ notification[value="loop-sharing-notification"] .messageImage {
 /* === end of social toolbar provider menu === */
 
 %include ../shared/social/chat.inc.css
-
-.chat-titlebar {
-  background-color: #d9d9d9;
-  background-image: linear-gradient(rgba(255,255,255,.43), transparent);
-}
-
-.chat-titlebar[selected] {
-  background-color: #f0f0f0;
-}
-
-.chatbar-button {
-  background-color: #d9d9d9;
-  background-image: linear-gradient(rgba(255,255,255,.43), transparent);
-  border-top-left-radius: @toolbarbuttonCornerRadius@;
-  border-top-right-radius: @toolbarbuttonCornerRadius@;
-}
-
-.chatbar-button:hover,
-.chatbar-button[open="true"] {
-  background-color: #f0f0f0;
-}
-
-.chatbar-button[activity]:not([open]) {
-  background-image: radial-gradient(circle farthest-corner at center 2px, rgb(254,254,255) 3%, rgba(210,235,255,0.9) 12%, rgba(148,205,253,0.6) 30%, rgba(148,205,253,0.2) 70%);
-}
-
-chatbox {
-  border-top-left-radius: @toolbarbuttonCornerRadius@;
-  border-top-right-radius: @toolbarbuttonCornerRadius@;
-}
-
-window > chatbox {
-  border-top-left-radius: @toolbarbuttonCornerRadius@;
-  border-top-right-radius: @toolbarbuttonCornerRadius@;
-  border-bottom-left-radius: @toolbarbuttonCornerRadius@;
-  border-bottom-right-radius: @toolbarbuttonCornerRadius@;
-}
 
 /* Customization mode */
 

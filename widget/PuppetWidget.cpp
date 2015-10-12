@@ -257,8 +257,10 @@ PuppetWidget::ConfigureChildren(const nsTArray<Configuration>& aConfigurations)
 NS_IMETHODIMP
 PuppetWidget::SetFocus(bool aRaise)
 {
-  // XXX/cjones: someone who knows about event handling needs to
-  // decide how this should work.
+  if (aRaise && mTabChild) {
+    mTabChild->SendRequestFocus(true);
+  }
+
   return NS_OK;
 }
 
@@ -1137,6 +1139,12 @@ uint32_t PuppetWidget::GetMaxTouchPoints() const
     sIsInitialized = true;
   }
   return sTouchPoints;
+}
+
+void
+PuppetWidget::StartAsyncScrollbarDrag(const AsyncDragMetrics& aDragMetrics)
+{
+  mTabChild->SendStartScrollbarDrag(aDragMetrics);
 }
 
 PuppetScreen::PuppetScreen(void *nativeScreen)

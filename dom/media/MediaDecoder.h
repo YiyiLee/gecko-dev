@@ -524,10 +524,6 @@ public:
   MediaDecoderStateMachine* GetStateMachine() const;
   void SetStateMachine(MediaDecoderStateMachine* aStateMachine);
 
-  // Returns the monitor for other threads to synchronise access to
-  // state.
-  ReentrantMonitor& GetReentrantMonitor() override;
-
   // Constructs the time ranges representing what segments of the media
   // are buffered and playable.
   virtual media::TimeIntervals GetBuffered();
@@ -811,11 +807,6 @@ private:
   //
   // Explicitly prievate to force access via accessors.
   nsRefPtr<MediaDecoderStateMachine> mDecoderStateMachine;
-
-  // |ReentrantMonitor| for detecting when the video play state changes. A call
-  // to |Wait| on this monitor will block the thread until the next state
-  // change.  Explicitly private for force access via GetReentrantMonitor.
-  ReentrantMonitor mReentrantMonitor;
 
 #ifdef MOZ_EME
   MozPromiseHolder<CDMProxyPromise> mCDMProxyPromiseHolder;

@@ -57,11 +57,13 @@ typedef nsCSSProps::KTableValue KTableValue;
 
 // pref-backed bool values (hooked up in nsCSSParser::Startup)
 static bool sOpentypeSVGEnabled;
+static bool sWebkitPrefixedAliasesEnabled;
 static bool sUnprefixingServiceEnabled;
 #ifdef NIGHTLY_BUILD
 static bool sUnprefixingServiceGloballyWhitelisted;
 #endif
 static bool sMozGradientsEnabled;
+static bool sControlCharVisibility;
 
 const uint32_t
 nsCSSProps::kParserVariantTable[eCSSProperty_COUNT_no_shorthands] = {
@@ -321,6 +323,9 @@ public:
     nsCSSProps::EnabledState enabledState = nsCSSProps::eEnabledForAllContent;
     if (mUnsafeRulesEnabled) {
       enabledState |= nsCSSProps::eEnabledInUASheets;
+    }
+    if (mIsChrome) {
+      enabledState |= nsCSSProps::eEnabledInChrome;
     }
     return enabledState;
   }
@@ -733,18 +738,19 @@ protected:
   nsCSSKeyword LookupKeywordPrefixAware(nsAString& aKeywordStr,
                                         const KTableValue aKeywordTable[]);
 
-  bool ShouldUseUnprefixingService();
+  bool ShouldUseUnprefixingService() const;
   bool ParsePropertyWithUnprefixingService(const nsAString& aPropertyName,
                                            css::Declaration* aDeclaration,
                                            uint32_t aFlags,
                                            bool aMustCallValueAppended,
                                            bool* aChanged,
                                            nsCSSContextType aContext);
-  // When we detect a webkit-prefixed gradient expression, this function can
-  // be used to parse its body into outparam |aValue|. Only call if
-  // ShouldUseUnprefixingService() returns true.
-  bool ParseWebkitPrefixedGradient(nsAString& aPrefixedFuncName,
-                                   nsCSSValue& aValue);
+  // When we detect a webkit-prefixed gradient expression, this function can be
+  // used to parse its body into outparam |aValue|, with the help of the
+  // CSSUnprefixingService.
+  // Only call if ShouldUseUnprefixingService() returns true.
+  bool ParseWebkitPrefixedGradientWithService(nsAString& aPrefixedFuncName,
+                                              nsCSSValue& aValue);
 
   bool ParseProperty(nsCSSProperty aPropID);
   bool ParsePropertyByFunction(nsCSSProperty aPropID);
@@ -800,6 +806,7 @@ protected:
         mPosition(aPosition), mSize(aSize) {};
   };
 
+  bool IsFunctionTokenValidForBackgroundImage(const nsCSSToken& aToken) const;
   bool ParseBackgroundItem(BackgroundParseState& aState);
 
   bool ParseValueList(nsCSSProperty aPropID); // a single value prop-id
@@ -1101,10 +1108,13 @@ protected:
   bool ParseImageRect(nsCSSValue& aImage);
   bool ParseElement(nsCSSValue& aValue);
   bool ParseColorStop(nsCSSValueGradient* aGradient);
-  bool ParseLinearGradient(nsCSSValue& aValue, bool aIsRepeating,
-                           bool aIsLegacy);
-  bool ParseRadialGradient(nsCSSValue& aValue, bool aIsRepeating,
-                           bool aIsLegacy);
+
+  enum GradientParsingFlags {
+    eGradient_Repeating    = 1 << 0, // repeating-{linear|radial}-gradient
+    eGradient_MozLegacy    = 1 << 1, // -moz-{linear|radial}-gradient
+  };
+  bool ParseLinearGradient(nsCSSValue& aValue, uint8_t aFlags);
+  bool ParseRadialGradient(nsCSSValue& aValue, uint8_t aFlags);
   bool IsLegacyGradientLine(const nsCSSTokenType& aType,
                             const nsString& aId);
   bool ParseGradientColorStops(nsCSSValueGradient* aGradient,
@@ -1208,6 +1218,9 @@ protected:
   // True if unsafe rules should be allowed
   bool mUnsafeRulesEnabled : 1;
 
+  // True if we are in parsing rules for the chrome.
+  bool mIsChrome : 1;
+
   // True if viewport units should be allowed.
   bool mViewportUnitsEnabled : 1;
 
@@ -1297,6 +1310,9 @@ static void AppendRuleToSheet(css::Rule* aRule, void* aParser)
 #define REPORT_UNEXPECTED_P(msg_, param_) \
   { if (!mSuppressErrors) mReporter->ReportUnexpected(#msg_, param_); }
 
+#define REPORT_UNEXPECTED_P_V(msg_, param_, value_) \
+  { if (!mSuppressErrors) mReporter->ReportUnexpected(#msg_, param_, value_); }
+
 #define REPORT_UNEXPECTED_TOKEN(msg_) \
   { if (!mSuppressErrors) mReporter->ReportUnexpected(#msg_, mToken); }
 
@@ -1331,6 +1347,7 @@ CSSParserImpl::CSSParserImpl()
     mHashlessColorQuirk(false),
     mUnitlessLengthQuirk(false),
     mUnsafeRulesEnabled(false),
+    mIsChrome(false),
     mViewportUnitsEnabled(true),
     mHTMLMediaMode(false),
     mParsingCompoundProperty(false),
@@ -1483,6 +1500,7 @@ CSSParserImpl::ParseSheet(const nsAString& aInput,
   }
 
   mUnsafeRulesEnabled = aAllowUnsafeRules;
+  mIsChrome = nsContentUtils::IsSystemPrincipal(aSheetPrincipal);
   mReusableSheets = aReusableSheets;
 
   nsCSSToken* tk = &mToken;
@@ -1507,6 +1525,7 @@ CSSParserImpl::ParseSheet(const nsAString& aInput,
   ReleaseScanner();
 
   mUnsafeRulesEnabled = false;
+  mIsChrome = false;
   mReusableSheets = nullptr;
 
   // XXX check for low level errors
@@ -1683,10 +1702,7 @@ CSSParserImpl::ParseProperty(const nsCSSProperty aPropID,
 
   // Check for unknown or preffed off properties
   if (eCSSProperty_UNKNOWN == aPropID ||
-      !(nsCSSProps::IsEnabled(aPropID) ||
-        (mUnsafeRulesEnabled &&
-         nsCSSProps::PropHasFlags(aPropID,
-                                  CSS_PROPERTY_ALWAYS_ENABLED_IN_UA_SHEETS)))) {
+      !nsCSSProps::IsEnabled(aPropID, PropertyEnabledState())) {
     NS_ConvertASCIItoUTF16 propName(nsCSSProps::GetStringValue(aPropID));
     REPORT_UNEXPECTED_P(PEUnknownProperty, propName);
     REPORT_UNEXPECTED(PEDeclDropped);
@@ -2683,7 +2699,8 @@ CSSParserImpl::ParsePropertyWithVariableReferences(
     if (!valid) {
       NS_ConvertASCIItoUTF16 propName(nsCSSProps::GetStringValue(
                                                               propertyToParse));
-      REPORT_UNEXPECTED_P(PEValueWithVariablesParsingError, propName);
+      REPORT_UNEXPECTED_P_V(PEValueWithVariablesParsingErrorInValue,
+                            propName, expandedValue);
       if (nsCSSProps::IsInherited(aPropertyID)) {
         REPORT_UNEXPECTED(PEValueWithVariablesFallbackInherit);
       } else {
@@ -2990,8 +3007,11 @@ CSSParserImpl::ParseAtRule(RuleAppendFunc aAppendFunc,
     parseFunc = &CSSParserImpl::ParsePageRule;
     newSection = eCSSSection_General;
 
-  } else if ((nsCSSProps::IsEnabled(eCSSPropertyAlias_MozAnimation) &&
+  } else if ((nsCSSProps::IsEnabled(eCSSPropertyAlias_MozAnimation,
+                                    PropertyEnabledState()) &&
               mToken.mIdent.LowerCaseEqualsLiteral("-moz-keyframes")) ||
+             (nsCSSProps::IsEnabled(eCSSPropertyAlias_WebkitAnimation) &&
+              mToken.mIdent.LowerCaseEqualsLiteral("-webkit-keyframes")) ||
              mToken.mIdent.LowerCaseEqualsLiteral("keyframes")) {
     parseFunc = &CSSParserImpl::ParseKeyframesRule;
     newSection = eCSSSection_General;
@@ -6668,10 +6688,15 @@ CSSParserImpl::LookupKeywordPrefixAware(nsAString& aKeywordStr,
 }
 
 bool
-CSSParserImpl::ShouldUseUnprefixingService()
+CSSParserImpl::ShouldUseUnprefixingService() const
 {
   if (!sUnprefixingServiceEnabled) {
     // Unprefixing is globally disabled.
+    return false;
+  }
+  if (sWebkitPrefixedAliasesEnabled) {
+    // Native webkit-prefix support is enabled, which trumps the unprefixing
+    // service for handling prefixed CSS. Don't try to use both at once.
     return false;
   }
 
@@ -6743,8 +6768,9 @@ CSSParserImpl::ParsePropertyWithUnprefixingService(
 }
 
 bool
-CSSParserImpl::ParseWebkitPrefixedGradient(nsAString& aPrefixedFuncName,
-                                           nsCSSValue& aValue)
+CSSParserImpl::ParseWebkitPrefixedGradientWithService(
+  nsAString& aPrefixedFuncName,
+  nsCSSValue& aValue)
 {
   MOZ_ASSERT(ShouldUseUnprefixingService(),
              "Should only call if we're allowed to use unprefixing service");
@@ -6796,10 +6822,10 @@ CSSParserImpl::ParseWebkitPrefixedGradient(nsAString& aPrefixedFuncName,
 
   nsAutoScannerChanger scannerChanger(this, unprefixedFuncBody);
   if (unprefixedFuncName.EqualsLiteral("linear-gradient")) {
-    return ParseLinearGradient(aValue, false, false);
+    return ParseLinearGradient(aValue, 0);
   }
   if (unprefixedFuncName.EqualsLiteral("radial-gradient")) {
-    return ParseRadialGradient(aValue, false, false);
+    return ParseRadialGradient(aValue, 0);
   }
 
   NS_ERROR("CSSUnprefixingService returned an unrecognized type of "
@@ -7432,31 +7458,30 @@ CSSParserImpl::ParseVariant(nsCSSValue& aValue,
       eCSSToken_Function == tk->mType) {
     // a generated gradient
     nsDependentString tmp(tk->mIdent, 0);
-    bool isLegacy = false;
+    uint8_t gradientFlags = 0;
     if (sMozGradientsEnabled &&
         StringBeginsWith(tmp, NS_LITERAL_STRING("-moz-"))) {
       tmp.Rebind(tmp, 5);
-      isLegacy = true;
+      gradientFlags |= eGradient_MozLegacy;
     }
-    bool isRepeating = false;
     if (StringBeginsWith(tmp, NS_LITERAL_STRING("repeating-"))) {
       tmp.Rebind(tmp, 10);
-      isRepeating = true;
+      gradientFlags |= eGradient_Repeating;
     }
 
     if (tmp.LowerCaseEqualsLiteral("linear-gradient")) {
-      return ParseLinearGradient(aValue, isRepeating, isLegacy);
+      return ParseLinearGradient(aValue, gradientFlags);
     }
     if (tmp.LowerCaseEqualsLiteral("radial-gradient")) {
-      return ParseRadialGradient(aValue, isRepeating, isLegacy);
+      return ParseRadialGradient(aValue, gradientFlags);
     }
     if (ShouldUseUnprefixingService() &&
-        !isRepeating && !isLegacy &&
+        !gradientFlags &&
         StringBeginsWith(tmp, NS_LITERAL_STRING("-webkit-"))) {
       // Copy 'tmp' into a string on the stack, since as soon as we
       // start parsing, its backing store (in "tk") will be overwritten
       nsAutoString prefixedFuncName(tmp);
-      return ParseWebkitPrefixedGradient(prefixedFuncName, aValue);
+      return ParseWebkitPrefixedGradientWithService(prefixedFuncName, aValue);
     }
   }
   if ((aVariantMask & VARIANT_IMAGE_RECT) != 0 &&
@@ -9231,11 +9256,11 @@ CSSParserImpl::ParseColorStop(nsCSSValueGradient* aGradient)
 //
 // <color-stops> : <color-stop> , <color-stop> [, <color-stop>]*
 bool
-CSSParserImpl::ParseLinearGradient(nsCSSValue& aValue, bool aIsRepeating,
-                                   bool aIsLegacy)
+CSSParserImpl::ParseLinearGradient(nsCSSValue& aValue,
+                                   uint8_t aFlags)
 {
   nsRefPtr<nsCSSValueGradient> cssGradient
-    = new nsCSSValueGradient(false, aIsRepeating);
+    = new nsCSSValueGradient(false, aFlags & eGradient_Repeating);
 
   if (!GetToken(true)) {
     return false;
@@ -9273,7 +9298,7 @@ CSSParserImpl::ParseLinearGradient(nsCSSValue& aValue, bool aIsRepeating,
     return ParseGradientColorStops(cssGradient, aValue);
   }
 
-  if (!aIsLegacy) {
+  if (!(aFlags & eGradient_MozLegacy)) {
     UngetToken();
 
     // <angle> ,
@@ -9321,11 +9346,11 @@ CSSParserImpl::ParseLinearGradient(nsCSSValue& aValue, bool aIsRepeating,
 }
 
 bool
-CSSParserImpl::ParseRadialGradient(nsCSSValue& aValue, bool aIsRepeating,
-                                   bool aIsLegacy)
+CSSParserImpl::ParseRadialGradient(nsCSSValue& aValue,
+                                   uint8_t aFlags)
 {
   nsRefPtr<nsCSSValueGradient> cssGradient
-    = new nsCSSValueGradient(true, aIsRepeating);
+    = new nsCSSValueGradient(true, aFlags & eGradient_Repeating);
 
   // [ <shape> || <size> ]
   bool haveShape =
@@ -9333,7 +9358,7 @@ CSSParserImpl::ParseRadialGradient(nsCSSValue& aValue, bool aIsRepeating,
                  nsCSSProps::kRadialGradientShapeKTable);
 
   bool haveSize = ParseVariant(cssGradient->GetRadialSize(), VARIANT_KEYWORD,
-                               aIsLegacy ?
+                               (aFlags & eGradient_MozLegacy) ?
                                nsCSSProps::kRadialGradientLegacySizeKTable :
                                nsCSSProps::kRadialGradientSizeKTable);
   if (haveSize) {
@@ -9342,7 +9367,7 @@ CSSParserImpl::ParseRadialGradient(nsCSSValue& aValue, bool aIsRepeating,
       haveShape = ParseVariant(cssGradient->GetRadialShape(), VARIANT_KEYWORD,
                                nsCSSProps::kRadialGradientShapeKTable);
     }
-  } else if (!aIsLegacy) {
+  } else if (!(aFlags & eGradient_MozLegacy)) {
     // Save RadialShape before parsing RadiusX because RadialShape and
     // RadiusX share the storage.
     int32_t shape =
@@ -9393,7 +9418,7 @@ CSSParserImpl::ParseRadialGradient(nsCSSValue& aValue, bool aIsRepeating,
     return false;
   }
 
-  if (!aIsLegacy) {
+  if (!(aFlags & eGradient_MozLegacy)) {
     if (mToken.mType == eCSSToken_Ident &&
         mToken.mIdent.LowerCaseEqualsLiteral("at")) {
       // [ <shape> || <size> ]? at <position> ,
@@ -10361,12 +10386,6 @@ CSSParserImpl::ParseBoxProperty(nsCSSValue& aValue,
     return false;
   }
 
-  if (aPropID == eCSSProperty_script_level ||
-      aPropID == eCSSProperty_math_display) {
-    MOZ_ASSERT(false, "must not be called for unsafe properties");
-    return false;
-  }
-
   if (variant & ~(VARIANT_AHKLP | VARIANT_COLOR | VARIANT_CALC)) {
     MOZ_ASSERT(false, "must only be called for properties that take certain "
                       "variants");
@@ -10454,15 +10473,6 @@ CSSParserImpl::ParseSingleValueProperty(nsCSSValue& aValue,
     MOZ_ASSERT(false, "not a single value property");
     return false;
   }
-
-  // We only allow 'script-level' when unsafe rules are enabled, because
-  // otherwise it could interfere with rulenode optimizations if used in
-  // a non-MathML-enabled document. We also only allow math-display when
-  // unsafe rules are enabled.
-  if (!mUnsafeRulesEnabled &&
-      (aPropID == eCSSProperty_script_level ||
-       aPropID == eCSSProperty_math_display))
-    return false;
 
   const KTableValue* kwtable = nsCSSProps::kKeywordTableTable[aPropID];
   uint32_t restrictions = nsCSSProps::ValueRestrictions(aPropID);
@@ -10632,6 +10642,33 @@ CSSParserImpl::ParseBackground()
   return true;
 }
 
+// Helper for ParseBackgroundItem. Returns true if the passed-in nsCSSToken is
+// a function which is accepted for background-image.
+bool
+CSSParserImpl::IsFunctionTokenValidForBackgroundImage(
+  const nsCSSToken& aToken) const
+{
+  MOZ_ASSERT(aToken.mType == eCSSToken_Function,
+             "Should only be called for function-typed tokens");
+
+  const nsAString& funcName = aToken.mIdent;
+
+  return funcName.LowerCaseEqualsLiteral("linear-gradient") ||
+    funcName.LowerCaseEqualsLiteral("radial-gradient") ||
+    funcName.LowerCaseEqualsLiteral("repeating-linear-gradient") ||
+    funcName.LowerCaseEqualsLiteral("repeating-radial-gradient") ||
+    funcName.LowerCaseEqualsLiteral("-moz-linear-gradient") ||
+    funcName.LowerCaseEqualsLiteral("-moz-radial-gradient") ||
+    funcName.LowerCaseEqualsLiteral("-moz-repeating-linear-gradient") ||
+    funcName.LowerCaseEqualsLiteral("-moz-repeating-radial-gradient") ||
+    funcName.LowerCaseEqualsLiteral("-moz-image-rect") ||
+    funcName.LowerCaseEqualsLiteral("-moz-element") ||
+    (ShouldUseUnprefixingService() &&
+     (funcName.LowerCaseEqualsLiteral("-webkit-gradient") ||
+      funcName.LowerCaseEqualsLiteral("-webkit-linear-gradient") ||
+      funcName.LowerCaseEqualsLiteral("-webkit-radial-gradient")));
+}
+
 // Parse one item of the background shorthand property.
 bool
 CSSParserImpl::ParseBackgroundItem(CSSParserImpl::BackgroundParseState& aState)
@@ -10774,20 +10811,7 @@ CSSParserImpl::ParseBackgroundItem(CSSParserImpl::BackgroundParseState& aState)
       }
     } else if (tt == eCSSToken_URL ||
                (tt == eCSSToken_Function &&
-                (mToken.mIdent.LowerCaseEqualsLiteral("linear-gradient") ||
-                 mToken.mIdent.LowerCaseEqualsLiteral("radial-gradient") ||
-                 mToken.mIdent.LowerCaseEqualsLiteral("repeating-linear-gradient") ||
-                 mToken.mIdent.LowerCaseEqualsLiteral("repeating-radial-gradient") ||
-                 mToken.mIdent.LowerCaseEqualsLiteral("-moz-linear-gradient") ||
-                 mToken.mIdent.LowerCaseEqualsLiteral("-moz-radial-gradient") ||
-                 mToken.mIdent.LowerCaseEqualsLiteral("-moz-repeating-linear-gradient") ||
-                 mToken.mIdent.LowerCaseEqualsLiteral("-moz-repeating-radial-gradient") ||
-                 mToken.mIdent.LowerCaseEqualsLiteral("-moz-image-rect") ||
-                 mToken.mIdent.LowerCaseEqualsLiteral("-moz-element") ||
-                 (ShouldUseUnprefixingService() &&
-                  (mToken.mIdent.LowerCaseEqualsLiteral("-webkit-gradient") ||
-                   mToken.mIdent.LowerCaseEqualsLiteral("-webkit-linear-gradient") ||
-                   mToken.mIdent.LowerCaseEqualsLiteral("-webkit-radial-gradient")))))) {
+                IsFunctionTokenValidForBackgroundImage(mToken))) {
       if (haveImage)
         return false;
       haveImage = true;
@@ -15709,6 +15733,8 @@ nsCSSParser::Startup()
 {
   Preferences::AddBoolVarCache(&sOpentypeSVGEnabled,
                                "gfx.font_rendering.opentype_svg.enabled");
+  Preferences::AddBoolVarCache(&sWebkitPrefixedAliasesEnabled,
+                               "layout.css.prefixes.webkit");
   Preferences::AddBoolVarCache(&sUnprefixingServiceEnabled,
                                "layout.css.unprefixing-service.enabled");
 #ifdef NIGHTLY_BUILD
@@ -15717,6 +15743,8 @@ nsCSSParser::Startup()
 #endif
   Preferences::AddBoolVarCache(&sMozGradientsEnabled,
                                "layout.css.prefixes.gradients");
+  Preferences::AddBoolVarCache(&sControlCharVisibility,
+                               "layout.css.control-characters.visible");
 }
 
 nsCSSParser::nsCSSParser(mozilla::css::Loader* aLoader,
@@ -16048,4 +16076,13 @@ nsCSSParser::IsValueValidForProperty(const nsCSSProperty aPropID,
 {
   return static_cast<CSSParserImpl*>(mImpl)->
     IsValueValidForProperty(aPropID, aPropValue);
+}
+
+/* static */
+uint8_t
+nsCSSParser::ControlCharVisibilityDefault()
+{
+  return sControlCharVisibility
+    ? NS_STYLE_CONTROL_CHARACTER_VISIBILITY_VISIBLE
+    : NS_STYLE_CONTROL_CHARACTER_VISIBILITY_HIDDEN;
 }

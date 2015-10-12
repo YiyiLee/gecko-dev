@@ -55,12 +55,13 @@ import org.mozilla.gecko.util.NativeJSContainer;
 import org.mozilla.gecko.util.NativeJSObject;
 import org.mozilla.gecko.util.ProxySelector;
 import org.mozilla.gecko.util.ThreadUtils;
+import org.mozilla.gecko.widget.ExternalIntentDuringPrivateBrowsingPromptFragment;
 
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.ActivityManager;
+import android.app.AlarmManager;
 import android.app.PendingIntent;
-import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -105,6 +106,7 @@ import android.os.SystemClock;
 import android.os.Vibrator;
 import android.provider.Browser;
 import android.provider.Settings;
+import android.support.v4.app.FragmentActivity;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.Base64;
@@ -130,8 +132,6 @@ public class GeckoAppShell
 
     // We have static members only.
     private GeckoAppShell() { }
-
-    private static GeckoEditableListener editableListener;
 
     private static final CrashHandler CRASH_HANDLER = new CrashHandler() {
         @Override
@@ -323,17 +323,6 @@ public class GeckoAppShell
             return;
         }
         sLayerView = lv;
-
-        // We should have a unique GeckoEditable instance per nsWindow instance,
-        // so even though we have a new view here, the underlying nsWindow is the same,
-        // and we don't create a new GeckoEditable.
-        if (editableListener == null) {
-            // Starting up; istall new Gecko-to-Java editable listener.
-            editableListener = new GeckoEditable();
-        } else {
-            // Bind the existing GeckoEditable instance to the new LayerView
-            GeckoAppShell.notifyIMEContext(GeckoEditableListener.IME_STATE_DISABLED, "", "", "");
-        }
     }
 
     @RobocopTarget
@@ -416,31 +405,6 @@ public class GeckoAppShell
     @WrapForJNI(allowMultithread = true, noThrow = true)
     public static void handleUncaughtException(Thread thread, Throwable e) {
         CRASH_HANDLER.uncaughtException(thread, e);
-    }
-
-    @WrapForJNI
-    public static void notifyIME(int type) {
-        if (editableListener != null) {
-            editableListener.notifyIME(type);
-        }
-    }
-
-    @WrapForJNI
-    public static void notifyIMEContext(int state, String typeHint,
-                                        String modeHint, String actionHint) {
-        if (editableListener != null) {
-            editableListener.notifyIMEContext(state, typeHint,
-                                               modeHint, actionHint);
-        }
-    }
-
-    @WrapForJNI
-    public static void notifyIMEChange(String text, int start, int end, int newEnd) {
-        if (newEnd < 0) { // Selection change
-            editableListener.onSelectionChange(start, end);
-        } else { // Text change
-            editableListener.onTextChange(text, start, end, newEnd);
-        }
     }
 
     private static final Object sEventAckLock = new Object();
@@ -601,6 +565,31 @@ public class GeckoAppShell
     @WrapForJNI
     public static void enableLocationHighAccuracy(final boolean enable) {
         locationHighAccuracyEnabled = enable;
+    }
+
+    @WrapForJNI
+    public static boolean setAlarm(int aSeconds, int aNanoSeconds) {
+        AlarmManager am = (AlarmManager)
+            getContext().getSystemService(Context.ALARM_SERVICE);
+
+        Intent intent = new Intent(getContext(), AlarmReceiver.class);
+        PendingIntent pi = PendingIntent.getBroadcast(getContext(), 0, intent, PendingIntent.FLAG_UPDATE_CURRENT);
+
+        // AlarmManager only supports millisecond precision
+        long time = ((long)aSeconds * 1000) + ((long)aNanoSeconds/1_000_000L);
+        am.setExact(AlarmManager.RTC_WAKEUP, time, pi);
+
+        return true;
+    }
+
+    @WrapForJNI
+    public static void disableAlarm() {
+        AlarmManager am = (AlarmManager)
+            getContext().getSystemService(Context.ALARM_SERVICE);
+
+        Intent intent = new Intent(getContext(), AlarmReceiver.class);
+        PendingIntent pi = PendingIntent.getBroadcast(getContext(), 0, intent, PendingIntent.FLAG_UPDATE_CURRENT);
+        am.cancel(pi);
     }
 
     @WrapForJNI
@@ -1023,6 +1012,17 @@ public class GeckoAppShell
         return true;
     }
 
+    @WrapForJNI
+    public static boolean openUriExternal(String targetURI,
+                                          String mimeType,
+                                          String packageName,
+                                          String className,
+                                          String action,
+                                          String title) {
+        // Default to showing prompt in private browsing to be safe.
+        return openUriExternal(targetURI, mimeType, packageName, className, action, title, true);
+    }
+
     /**
      * Given the inputs to <code>getOpenURIIntent</code>, plus an optional
      * package name and class name, create and fire an intent to open the
@@ -1036,15 +1036,20 @@ public class GeckoAppShell
      * @param action an Android action specifier, such as
      *               <code>Intent.ACTION_SEND</code>.
      * @param title the title to use in <code>ACTION_SEND</code> intents.
-     * @return true if the activity started successfully; false otherwise.
+     * @param showPromptInPrivateBrowsing whether or not the user should be prompted when opening
+     *                                    this uri from private browsing. This should be true
+     *                                    when the user doesn't explicitly choose to open an an
+     *                                    external app (e.g. just clicked a link).
+     * @return true if the activity started successfully or the user was prompted to open the
+     *              application; false otherwise.
      */
-    @WrapForJNI
     public static boolean openUriExternal(String targetURI,
                                           String mimeType,
                                           String packageName,
                                           String className,
                                           String action,
-                                          String title) {
+                                          String title,
+                                          final boolean showPromptInPrivateBrowsing) {
         final Context context = getContext();
         final Intent intent = getOpenURIIntent(context, targetURI,
                                                mimeType, action, title);
@@ -1063,15 +1068,16 @@ public class GeckoAppShell
         }
 
         intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        try {
-            context.startActivity(intent);
-            return true;
-        } catch (ActivityNotFoundException e) {
-            Log.w(LOGTAG, "Activity not found.", e);
-            return false;
-        } catch (SecurityException e) {
-            Log.w(LOGTAG, "Forbidden to launch activity.", e);
-            return false;
+
+        if (!showPromptInPrivateBrowsing) {
+            return ActivityHandlerHelper.startIntentAndCatch(LOGTAG, context, intent);
+        } else {
+            // Ideally we retrieve the Activity from the calling args, rather than
+            // statically, but since this method is called from Gecko and I'm
+            // unfamiliar with that code, this is a simpler solution.
+            final FragmentActivity fragmentActivity = (FragmentActivity) getGeckoInterface().getActivity();
+            return ExternalIntentDuringPrivateBrowsingPromptFragment.showDialogOrAndroidChooser(
+                    context, fragmentActivity.getSupportFragmentManager(), intent);
         }
     }
 
@@ -2355,31 +2361,42 @@ public class GeckoAppShell
         SmsManager.getInstance().deleteMessage(aMessageId, aRequestId);
     }
 
-    @WrapForJNI(stubName = "CreateMessageListWrapper")
-    public static void createMessageList(long aStartDate, long aEndDate, String[] aNumbers, int aNumbersCount, String aDelivery, boolean aHasRead, boolean aRead, long aThreadId, boolean aReverse, int aRequestId) {
+    @WrapForJNI(stubName = "CreateMessageCursorWrapper")
+    public static void createMessageCursor(long aStartDate, long aEndDate, String[] aNumbers, int aNumbersCount, String aDelivery, boolean aHasRead, boolean aRead, boolean aHasThreadId, long aThreadId, boolean aReverse, int aRequestId) {
         if (!SmsManager.isEnabled()) {
             return;
         }
 
-        SmsManager.getInstance().createMessageList(aStartDate, aEndDate, aNumbers, aNumbersCount, aDelivery, aHasRead, aRead, aThreadId, aReverse, aRequestId);
+        SmsManager.getInstance().createMessageCursor(aStartDate, aEndDate, aNumbers, aNumbersCount, aDelivery, aHasRead, aRead, aHasThreadId, aThreadId, aReverse, aRequestId);
     }
 
-    @WrapForJNI(stubName = "GetNextMessageInListWrapper")
-    public static void getNextMessageInList(int aListId, int aRequestId) {
+    @WrapForJNI(stubName = "GetNextMessageWrapper")
+    public static void getNextMessage(int aRequestId) {
         if (!SmsManager.isEnabled()) {
             return;
         }
 
-        SmsManager.getInstance().getNextMessageInList(aListId, aRequestId);
+        SmsManager.getInstance().getNextMessage(aRequestId);
     }
 
-    @WrapForJNI
-    public static void clearMessageList(int aListId) {
+    @WrapForJNI(stubName = "CreateThreadCursorWrapper")
+    public static void createThreadCursor(int aRequestId) {
+        Log.i("GeckoAppShell", "CreateThreadCursorWrapper!");
+
         if (!SmsManager.isEnabled()) {
             return;
         }
 
-        SmsManager.getInstance().clearMessageList(aListId);
+        SmsManager.getInstance().createThreadCursor(aRequestId);
+    }
+
+    @WrapForJNI(stubName = "GetNextThreadWrapper")
+    public static void getNextThread(int aRequestId) {
+        if (!SmsManager.isEnabled()) {
+            return;
+        }
+
+        SmsManager.getInstance().getNextThread(aRequestId);
     }
 
     /* Called by JNI from AndroidBridge, and by reflection from tests/BaseTest.java.in */
@@ -2391,7 +2408,7 @@ public class GeckoAppShell
 
     private static boolean sImeWasEnabledOnLastResize = false;
     public static void viewSizeChanged() {
-        LayerView v = getLayerView();
+        GeckoView v = (GeckoView) getLayerView();
         if (v == null) {
             return;
         }

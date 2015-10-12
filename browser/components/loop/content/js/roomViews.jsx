@@ -8,6 +8,7 @@ loop.roomViews = (function(mozL10n) {
 
   var ROOM_STATES = loop.store.ROOM_STATES;
   var SCREEN_SHARE_STATES = loop.shared.utils.SCREEN_SHARE_STATES;
+  var FAILURE_DETAILS = loop.shared.utils.FAILURE_DETAILS;
   var sharedActions = loop.shared.actions;
   var sharedMixins = loop.shared.mixins;
   var sharedUtils = loop.shared.utils;
@@ -75,6 +76,44 @@ loop.roomViews = (function(mozL10n) {
   };
 
   /**
+   * Used to display errors in direct calls and rooms to the user.
+   */
+  var FailureInfoView = React.createClass({
+    propTypes: {
+      failureReason: React.PropTypes.string.isRequired
+    },
+
+    /**
+     * Returns the translated message appropraite to the failure reason.
+     *
+     * @return {String} The translated message for the failure reason.
+     */
+    _getMessage: function() {
+      switch (this.props.failureReason) {
+        case FAILURE_DETAILS.NO_MEDIA:
+        case FAILURE_DETAILS.UNABLE_TO_PUBLISH_MEDIA:
+          return mozL10n.get("no_media_failure_message");
+        case FAILURE_DETAILS.TOS_FAILURE:
+          return mozL10n.get("tos_failure_message",
+            { clientShortname: mozL10n.get("clientShortname2") });
+        case FAILURE_DETAILS.ICE_FAILED:
+          return mozL10n.get("ice_failure_message");
+        default:
+          return mozL10n.get("generic_failure_message");
+      }
+    },
+
+    render: function() {
+      return (
+        <div className="failure-info">
+          <div className="failure-info-logo" />
+          <h2 className="failure-info-message">{this._getMessage()}</h2>
+        </div>
+      );
+    }
+  });
+
+  /**
    * Something went wrong view. Displayed when there's a big problem.
    */
   var RoomFailureView = React.createClass({
@@ -99,14 +138,21 @@ loop.roomViews = (function(mozL10n) {
         { id: "feedback" },
         { id: "help" }
       ];
+
+      var btnTitle;
+      if (this.props.failureReason === FAILURE_DETAILS.ICE_FAILED) {
+        btnTitle = mozL10n.get("retry_call_button");
+      } else {
+        btnTitle = mozL10n.get("rejoin_button");
+      }
+
       return (
         <div className="room-failure">
-          <loop.conversationViews.FailureInfoView
-            failureReason={this.props.failureReason} />
+          <FailureInfoView failureReason={this.props.failureReason} />
           <div className="btn-group call-action-group">
             <button className="btn btn-info btn-rejoin"
                     onClick={this.handleRejoinCall}>
-              {mozL10n.get("rejoin_button")}
+              {btnTitle}
             </button>
           </div>
           <loop.shared.views.SettingsControlButton
@@ -191,6 +237,10 @@ loop.roomViews = (function(mozL10n) {
    * Desktop room invitation view (overlay).
    */
   var DesktopRoomInvitationView = React.createClass({
+    statics: {
+      TRIGGERED_RESET_DELAY: 2000
+    },
+
     mixins: [sharedMixins.DropdownMenuMixin(".room-invitation-overlay")],
 
     propTypes: {
@@ -236,6 +286,16 @@ loop.roomViews = (function(mozL10n) {
       }));
 
       this.setState({copiedUrl: true});
+      setTimeout(this.resetTriggeredButtons, this.constructor.TRIGGERED_RESET_DELAY);
+    },
+
+    /**
+     * Reset state of triggered buttons if necessary
+     */
+    resetTriggeredButtons: function() {
+      if (this.state.copiedUrl) {
+        this.setState({copiedUrl: false});
+      }
     },
 
     handleShareButtonClick: function(event) {
@@ -252,14 +312,6 @@ loop.roomViews = (function(mozL10n) {
       this.toggleDropdownMenu();
     },
 
-    handleAddContextClick: function(event) {
-      event.preventDefault();
-
-      if (this.props.onAddContextClick) {
-        this.props.onAddContextClick();
-      }
-    },
-
     handleEditContextClose: function() {
       if (this.props.onEditContextClose) {
         this.props.onEditContextClose();
@@ -271,43 +323,35 @@ loop.roomViews = (function(mozL10n) {
         return null;
       }
 
-      var canAddContext = this.props.mozLoop.getLoopPref("contextInConversations.enabled") &&
-        // Don't show the link when we're showing the edit form already:
-        !this.props.showEditContext &&
-        // Don't show the link when there's already context data available:
-        !(this.props.roomData.roomContextUrls || this.props.roomData.roomDescription);
-
       var cx = React.addons.classSet;
       return (
         <div className="room-invitation-overlay">
           <div className="room-invitation-content">
             <p className={cx({hide: this.props.showEditContext})}>
-              {mozL10n.get("invite_header_text")}
+              {mozL10n.get("invite_header_text2")}
             </p>
-            <a className={cx({hide: !canAddContext, "room-invitation-addcontext": true})}
-               onClick={this.handleAddContextClick}>
-              {mozL10n.get("context_add_some_label")}
-            </a>
           </div>
           <div className={cx({
             "btn-group": true,
             "call-action-group": true,
             hide: this.props.showEditContext
           })}>
-            <button className="btn btn-info btn-email"
-                    onClick={this.handleEmailButtonClick}>
-              {mozL10n.get("email_link_button")}
-            </button>
-            <button className="btn btn-info btn-copy"
-                    onClick={this.handleCopyButtonClick}>
-              {this.state.copiedUrl ? mozL10n.get("copied_url_button") :
-                                      mozL10n.get("copy_url_button2")}
-            </button>
-            <button className="btn btn-info btn-share"
-                    onClick={this.handleShareButtonClick}
-                    ref="anchor">
-              {mozL10n.get("share_button3")}
-            </button>
+            <div className={cx({
+                "btn-copy": true,
+                "invite-button": true,
+                "triggered": this.state.copiedUrl
+              })}
+              onClick={this.handleCopyButtonClick}>
+              <img src="loop/shared/img/svg/glyph-link-16x16.svg" />
+              <p>{mozL10n.get(this.state.copiedUrl ?
+                "invite_copied_link_button" : "invite_copy_link_button")}</p>
+            </div>
+            <div className="btn-email invite-button"
+              onClick={this.handleEmailButtonClick}
+              onMouseOver={this.resetTriggeredButtons}>
+              <img src="loop/shared/img/svg/glyph-email-16x16.svg" />
+              <p>{mozL10n.get("invite_email_link_button")}</p>
+            </div>
           </div>
           <SocialShareDropdown
             dispatcher={this.props.dispatcher}
@@ -550,6 +594,7 @@ loop.roomViews = (function(mozL10n) {
     ],
 
     propTypes: {
+      chatWindowDetached: React.PropTypes.bool.isRequired,
       dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired,
       // The poster URLs are for UI-showcase testing and development.
       localPosterUrl: React.PropTypes.string,
@@ -781,6 +826,7 @@ loop.roomViews = (function(mozL10n) {
                   screenShare={screenShareData}
                   settingsMenuItems={settingsMenuItems}
                   show={!shouldRenderEditContextView}
+                  showHangup={this.props.chatWindowDetached}
                   video={{enabled: !this.state.videoMuted, visible: true}} />
                 <DesktopRoomInvitationView
                   dispatcher={this.props.dispatcher}
@@ -811,6 +857,7 @@ loop.roomViews = (function(mozL10n) {
 
   return {
     ActiveRoomStoreMixin: ActiveRoomStoreMixin,
+    FailureInfoView: FailureInfoView,
     RoomFailureView: RoomFailureView,
     SocialShareDropdown: SocialShareDropdown,
     DesktopRoomEditContextView: DesktopRoomEditContextView,

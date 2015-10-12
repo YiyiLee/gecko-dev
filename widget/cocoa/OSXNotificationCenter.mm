@@ -17,6 +17,7 @@
 #include "nsCOMPtr.h"
 #include "nsIObserver.h"
 #include "nsIContentPolicy.h"
+#include "nsAlertsUtils.h"
 #include "imgRequestProxy.h"
 
 using namespace mozilla;
@@ -139,7 +140,8 @@ enum {
 namespace mozilla {
 
 enum {
-  OSXNotificationActionDisable = 0
+  OSXNotificationActionDisable = 0,
+  OSXNotificationActionSettings = 1,
 };
 
 class OSXNotificationInfo {
@@ -239,27 +241,33 @@ OSXNotificationCenter::ShowAlertNotification(const nsAString & aImageUrl, const 
 
   Class unClass = NSClassFromString(@"NSUserNotification");
   id<FakeNSUserNotification> notification = [[unClass alloc] init];
-  notification.title = [NSString stringWithCharacters:(const unichar *)aAlertTitle.BeginReading()
-                                               length:aAlertTitle.Length()];
-  notification.informativeText = [NSString stringWithCharacters:(const unichar *)aAlertText.BeginReading()
-                                                         length:aAlertText.Length()];
+  notification.title = nsCocoaUtils::ToNSString(aAlertTitle);
+
+  nsAutoString hostPort;
+  nsAlertsUtils::GetSourceHostPort(aPrincipal, hostPort);
+  if (!hostPort.IsEmpty()) {
+    notification.subtitle = nsCocoaUtils::ToNSString(hostPort);
+  }
+
+  notification.informativeText = nsCocoaUtils::ToNSString(aAlertText);
   notification.soundName = NSUserNotificationDefaultSoundName;
   notification.hasActionButton = NO;
 
   // If this is not an application/extension alert, show additional actions dealing with permissions.
-  if (aPrincipal && !nsContentUtils::IsSystemOrExpandedPrincipal(aPrincipal)
-      && !aPrincipal->GetIsNullPrincipal()) {
+  if (nsAlertsUtils::IsActionablePrincipal(aPrincipal)) {
     nsCOMPtr<nsIStringBundleService> sbs = do_GetService(NS_STRINGBUNDLE_CONTRACTID);
     nsCOMPtr<nsIStringBundle> bundle;
     nsresult rv = sbs->CreateBundle("chrome://alerts/locale/alert.properties", getter_AddRefs(bundle));
     if (NS_SUCCEEDED(rv)) {
-      nsXPIDLString closeButtonTitle, actionButtonTitle, disableButtonTitle;
+      nsXPIDLString closeButtonTitle, actionButtonTitle, disableButtonTitle, settingsButtonTitle;
       bundle->GetStringFromName(NS_LITERAL_STRING("closeButton.title").get(),
                                 getter_Copies(closeButtonTitle));
       bundle->GetStringFromName(NS_LITERAL_STRING("actionButton.label").get(),
                                 getter_Copies(actionButtonTitle));
       bundle->GetStringFromName(NS_LITERAL_STRING("webActions.disable.label").get(),
                                 getter_Copies(disableButtonTitle));
+      bundle->GetStringFromName(NS_LITERAL_STRING("webActions.settings.label").get(),
+                                getter_Copies(settingsButtonTitle));
 
       notification.hasActionButton = YES;
       notification.otherButtonTitle = nsCocoaUtils::ToNSString(closeButtonTitle);
@@ -267,12 +275,13 @@ OSXNotificationCenter::ShowAlertNotification(const nsAString & aImageUrl, const 
       [(NSObject*)notification setValue:@(YES) forKey:@"_showsButtons"];
       [(NSObject*)notification setValue:@(YES) forKey:@"_alwaysShowAlternateActionMenu"];
       [(NSObject*)notification setValue:@[
-                                          nsCocoaUtils::ToNSString(disableButtonTitle)
+                                          nsCocoaUtils::ToNSString(disableButtonTitle),
+                                          nsCocoaUtils::ToNSString(settingsButtonTitle)
                                           ]
                                forKey:@"_alternateActionButtonTitles"];
     }
   }
-  NSString *alertName = [NSString stringWithCharacters:(const unichar *)aAlertName.BeginReading() length:aAlertName.Length()];
+  NSString *alertName = nsCocoaUtils::ToNSString(aAlertName);
   if (!alertName) {
     return NS_ERROR_FAILURE;
   }
@@ -332,7 +341,7 @@ OSXNotificationCenter::CloseAlert(const nsAString& aAlertName,
 {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
 
-  NSString *alertName = [NSString stringWithCharacters:(const unichar *)aAlertName.BeginReading() length:aAlertName.Length()];
+  NSString *alertName = nsCocoaUtils::ToNSString(aAlertName);
   CloseAlertCocoaString(alertName);
   return NS_OK;
 
@@ -393,6 +402,9 @@ OSXNotificationCenter::OnActivate(NSString *aAlertName,
             switch (aAdditionalActionIndex) {
               case OSXNotificationActionDisable:
                 osxni->mObserver->Observe(nullptr, "alertdisablecallback", osxni->mCookie.get());
+                break;
+              case OSXNotificationActionSettings:
+                osxni->mObserver->Observe(nullptr, "alertsettingscallback", osxni->mCookie.get());
                 break;
               default:
                 NS_WARNING("Unknown NSUserNotification additional action clicked");

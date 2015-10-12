@@ -5,18 +5,15 @@
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_pressed="true">
         <shape>
-            <gradient android:angle="90"
-                      android:startColor="@color/action_orange"
-                      android:endColor="@color/fennec_ui_orange"
-                      android:type="linear"/>
-            <corners android:radius="4dp"/>
+            <solid android:color="@color/toolbar_grey_pressed"/>
+            <corners android:radius="@dimen/standard_corner_radius"/>
         </shape>
     </item>
 
     <item>
         <shape>
             <solid android:color="@color/toolbar_grey"/>
-            <corners android:radius="4dp"/>
+            <corners android:radius="@dimen/standard_corner_radius"/>
         </shape>
     </item>
 </selector>

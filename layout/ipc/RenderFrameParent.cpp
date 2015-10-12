@@ -34,6 +34,10 @@
 #include "ClientLayerManager.h"
 #include "FrameLayerBuilder.h"
 
+#ifdef MOZ_ANDROID_APZ
+#include "AndroidBridge.h"
+#endif
+
 using namespace mozilla::dom;
 using namespace mozilla::gfx;
 using namespace mozilla::layers;
@@ -218,8 +222,12 @@ public:
 
   virtual void PostDelayedTask(Task* aTask, int aDelayMs) override
   {
+#ifdef MOZ_ANDROID_APZ
+    AndroidBridge::Bridge()->PostTaskToUiThread(aTask, aDelayMs);
+#else
     (MessageLoop::current() ? MessageLoop::current() : mUILoop)->
        PostDelayedTask(FROM_HERE, aTask, aDelayMs);
+#endif
   }
 
   virtual bool GetTouchSensitiveRegion(CSSRect* aOutRegion) override
@@ -587,6 +595,21 @@ bool
 RenderFrameParent::HitTest(const nsRect& aRect)
 {
   return mTouchRegion.Contains(aRect);
+}
+
+void
+RenderFrameParent::StartScrollbarDrag(const AsyncDragMetrics& aDragMetrics)
+{
+  if (GetApzcTreeManager()) {
+    uint64_t layersId = GetLayersId();
+    ScrollableLayerGuid guid(layersId, aDragMetrics.mPresShellId,
+                             aDragMetrics.mViewId);
+
+    APZThreadUtils::RunOnControllerThread(
+      NewRunnableMethod(GetApzcTreeManager(),
+                        &APZCTreeManager::StartScrollbarDrag,
+                        guid, aDragMetrics));
+  }
 }
 
 void

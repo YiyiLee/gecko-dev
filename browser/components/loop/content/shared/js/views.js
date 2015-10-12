@@ -120,10 +120,12 @@ loop.shared.views = (function(_, mozL10n) {
 
     _handleShareTabs: function() {
       this._startScreenShare("browser");
+      this.hideDropdownMenu();
     },
 
     _handleShareWindows: function() {
       this._startScreenShare("window");
+      this.hideDropdownMenu();
     },
 
     _getTitle: function() {
@@ -163,7 +165,7 @@ loop.shared.views = (function(_, mozL10n) {
         React.createElement("div", null, 
           React.createElement("button", {className: screenShareClasses, 
                   onClick: this.handleClick, 
-                  ref: "menu-button", 
+                  ref: "anchor", 
                   title: this._getTitle()}, 
             isActive ? null : React.createElement("span", {className: "chevron"})
           ), 
@@ -376,7 +378,8 @@ loop.shared.views = (function(_, mozL10n) {
         audio: {enabled: true, visible: true},
         screenShare: {state: SCREEN_SHARE_STATES.INACTIVE, visible: false},
         settingsMenuItems: null,
-        enableHangup: true
+        enableHangup: true,
+        showHangup: true
       };
     },
 
@@ -397,6 +400,7 @@ loop.shared.views = (function(_, mozL10n) {
       screenShare: React.PropTypes.object,
       settingsMenuItems: React.PropTypes.array,
       show: React.PropTypes.bool.isRequired,
+      showHangup: React.PropTypes.bool,
       video: React.PropTypes.object.isRequired
     },
 
@@ -493,14 +497,17 @@ loop.shared.views = (function(_, mozL10n) {
       });
       return (
         React.createElement("ul", {className: conversationToolbarCssClasses}, 
-          React.createElement("li", {className: "conversation-toolbar-btn-box btn-hangup-entry"}, 
-            React.createElement("button", {className: "btn btn-hangup", 
-                    disabled: !this.props.enableHangup, 
-                    onClick: this.handleClickHangup, 
-                    title: mozL10n.get("hangup_button_title")}, 
-              this._getHangupButtonLabel()
-            )
-          ), 
+          
+            this.props.showHangup ?
+            React.createElement("li", {className: "conversation-toolbar-btn-box btn-hangup-entry"}, 
+              React.createElement("button", {className: "btn btn-hangup", 
+                      disabled: !this.props.enableHangup, 
+                      onClick: this.handleClickHangup, 
+                      title: mozL10n.get("hangup_button_title")}, 
+                this._getHangupButtonLabel()
+              )
+            ) : null, 
+          
           React.createElement("li", {className: "conversation-toolbar-btn-box"}, 
             React.createElement("div", {className: mediaButtonGroupCssClasses}, 
                 React.createElement(MediaControlButton, {action: this.handleToggleVideo, 
@@ -1111,7 +1118,6 @@ loop.shared.views = (function(_, mozL10n) {
                this.state.localMediaAboslutelyPositioned ?
                 this.renderLocalVideo() : null, 
                this.props.children
-
             ), 
             React.createElement("div", {className: screenShareStreamClasses}, 
               React.createElement(MediaView, {displayAvatar: false, 

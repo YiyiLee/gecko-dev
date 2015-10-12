@@ -30,6 +30,7 @@ import org.mozilla.gecko.background.common.GlobalConstants;
 import org.mozilla.gecko.background.healthreport.HealthReportConstants;
 import org.mozilla.gecko.db.BrowserContract.SuggestedSites;
 import org.mozilla.gecko.restrictions.Restriction;
+import org.mozilla.gecko.tabqueue.TabQueueHelper;
 import org.mozilla.gecko.updater.UpdateService;
 import org.mozilla.gecko.updater.UpdateServiceHelper;
 import org.mozilla.gecko.util.GeckoEventListener;
@@ -127,6 +128,8 @@ OnSharedPreferenceChangeListener
     private static final String PREFS_DEVTOOLS_REMOTE_WIFI_ENABLED = "devtools.remote.wifi.enabled";
     private static final String PREFS_DISPLAY_TITLEBAR_MODE = "browser.chrome.titlebarMode";
     private static final String PREFS_SYNC = NON_PREF_PREFIX + "sync";
+    private static final String PREFS_TRACKING_PROTECTION = "privacy.trackingprotection.state";
+    private static final String PREFS_TRACKING_PROTECTION_PB = "privacy.trackingprotection.pbmode.enabled";
     public static final String PREFS_OPEN_URLS_IN_PRIVATE = NON_PREF_PREFIX + "openExternalURLsPrivately";
     public static final String PREFS_VOICE_INPUT_ENABLED = NON_PREF_PREFIX + "voice_input_enabled";
     public static final String PREFS_QRCODE_ENABLED = NON_PREF_PREFIX + "qrcode_enabled";
@@ -697,8 +700,7 @@ OnSharedPreferenceChangeListener
                 } else if (pref instanceof PanelsPreferenceCategory) {
                     mPanelsPreferenceCategory = (PanelsPreferenceCategory) pref;
                 }
-                if(AppConstants.MOZ_ANDROID_TAB_QUEUE && PREFS_CUSTOMIZE_SCREEN.equals(key)) {
-                    // Only change the customize pref screen summary on nightly builds with the tab queue build flag.
+                if(TabQueueHelper.TAB_QUEUE_ENABLED && PREFS_CUSTOMIZE_SCREEN.equals(key)) {
                     pref.setSummary(getString(R.string.pref_category_customize_alt_summary));
                 }
                 if (getResources().getString(R.string.pref_category_input_options).equals(key)) {
@@ -765,9 +767,16 @@ OnSharedPreferenceChangeListener
                         i--;
                         continue;
                     }
-                } else if (PREFS_HISTORY_SAVED_SEARCH.equals(key)) {
-                    // Remove settings UI if not on Nightly
+                } else if (PREFS_TRACKING_PROTECTION.equals(key)) {
+                    // Remove UI for global TP pref in non-Nightly builds.
                     if (!AppConstants.NIGHTLY_BUILD) {
+                        preferences.removePreference(pref);
+                        i--;
+                        continue;
+                    }
+                } else if (PREFS_TRACKING_PROTECTION_PB.equals(key)) {
+                    // Remove UI for private-browsing-only TP pref in Nightly builds.
+                    if (AppConstants.NIGHTLY_BUILD) {
                         preferences.removePreference(pref);
                         i--;
                         continue;
@@ -858,7 +867,7 @@ OnSharedPreferenceChangeListener
                     }
                 } else if (PREFS_TAB_QUEUE.equals(key)) {
                     // Only show tab queue pref on nightly builds with the tab queue build flag.
-                    if (!AppConstants.MOZ_ANDROID_TAB_QUEUE) {
+                    if (!TabQueueHelper.TAB_QUEUE_ENABLED) {
                         preferences.removePreference(pref);
                         i--;
                         continue;

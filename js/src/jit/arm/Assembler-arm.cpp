@@ -20,6 +20,7 @@
 #include "jit/arm/MacroAssembler-arm.h"
 #include "jit/ExecutableAllocator.h"
 #include "jit/JitCompartment.h"
+#include "jit/MacroAssembler.h"
 
 using namespace js;
 using namespace js::jit;
@@ -2138,6 +2139,7 @@ Assembler::allocEntry(size_t numInst, unsigned numPoolEntries,
                       bool markAsBranch, bool loadToPC)
 {
     BufferOffset offs = m_buffer.allocEntry(numInst, numPoolEntries, inst, data, pe, markAsBranch);
+    propagateOOM(offs.assigned());
 #ifdef JS_DISASM_ARM
     spewData(offs, numInst, loadToPC);
 #endif
@@ -2814,6 +2816,9 @@ Assembler::bind(Label* label, BufferOffset boff)
         BufferOffset dest = boff.assigned() ? boff : nextOffset();
         BufferOffset b(label);
         do {
+            // Even a 0 offset may be invalid if we're out of memory.
+            if (oom())
+                return;
             BufferOffset next;
             more = nextLink(b, &next);
             Instruction branch = *editSrc(b);
@@ -2837,7 +2842,7 @@ Assembler::bind(RepatchLabel* label)
     // disassembly, as the value that is bound to the label is often
     // effectively garbage and is replaced by something else later.
     BufferOffset dest = nextOffset();
-    if (label->used()) {
+    if (label->used() && !oom()) {
         // If the label has a use, then change this use to refer to the bound
         // label.
         BufferOffset branchOff(label->offset());
@@ -2862,7 +2867,7 @@ Assembler::retarget(Label* label, Label* target)
 #ifdef JS_DISASM_ARM
     spewRetarget(label, target);
 #endif
-    if (label->used()) {
+    if (label->used() && !oom()) {
         if (target->bound()) {
             bind(label, BufferOffset(target));
         } else if (target->used()) {

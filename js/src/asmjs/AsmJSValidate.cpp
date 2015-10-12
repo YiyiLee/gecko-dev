@@ -51,7 +51,6 @@
 
 #include "frontend/ParseNode-inl.h"
 #include "frontend/Parser-inl.h"
-#include "jit/AtomicOperations-inl.h"
 #include "jit/MacroAssembler-inl.h"
 
 using namespace js;
@@ -6401,6 +6400,9 @@ CheckFunction(ModuleValidator& m, LifoAlloc& lifo, AsmFunction** funcOut)
     }
 
     AsmFunction* asmFunc = lifo.new_<AsmFunction>(lifo);
+    if (!asmFunc)
+        return false;
+
     FunctionValidator f(m, *asmFunc, fn);
     if (!f.init())
         return false;

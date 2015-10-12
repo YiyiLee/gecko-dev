@@ -154,6 +154,14 @@ LIRGenerator::visitDefVar(MDefVar* ins)
 }
 
 void
+LIRGenerator::visitDefLexical(MDefLexical* ins)
+{
+    LDefLexical* lir = new(alloc()) LDefLexical();
+    add(lir, ins);
+    assignSafepoint(lir, ins);
+}
+
+void
 LIRGenerator::visitDefFun(MDefFun* ins)
 {
     LDefFun* lir = new(alloc()) LDefFun(useRegisterAtStart(ins->scopeChain()));
@@ -320,6 +328,7 @@ LIRGenerator::visitCreateThisWithProto(MCreateThisWithProto* ins)
 {
     LCreateThisWithProto* lir =
         new(alloc()) LCreateThisWithProto(useRegisterOrConstantAtStart(ins->getCallee()),
+                                          useRegisterOrConstantAtStart(ins->getNewTarget()),
                                           useRegisterOrConstantAtStart(ins->getPrototype()));
     defineReturn(lir, ins);
     assignSafepoint(lir, ins);
@@ -328,7 +337,8 @@ LIRGenerator::visitCreateThisWithProto(MCreateThisWithProto* ins)
 void
 LIRGenerator::visitCreateThis(MCreateThis* ins)
 {
-    LCreateThis* lir = new(alloc()) LCreateThis(useRegisterOrConstantAtStart(ins->getCallee()));
+    LCreateThis* lir = new(alloc()) LCreateThis(useRegisterOrConstantAtStart(ins->getCallee()),
+                                                useRegisterOrConstantAtStart(ins->getNewTarget()));
     defineReturn(lir, ins);
     assignSafepoint(lir, ins);
 }
@@ -4250,7 +4260,7 @@ LIRGenerator::visitLexicalCheck(MLexicalCheck* ins)
     MOZ_ASSERT(input->type() == MIRType_Value);
     LLexicalCheck* lir = new(alloc()) LLexicalCheck();
     useBox(lir, LLexicalCheck::Input, input);
-    assignSnapshot(lir, Bailout_UninitializedLexical);
+    assignSnapshot(lir, ins->bailoutKind());
     add(lir, ins);
     redefine(ins, input);
 }
@@ -4259,6 +4269,14 @@ void
 LIRGenerator::visitThrowUninitializedLexical(MThrowUninitializedLexical* ins)
 {
     LThrowUninitializedLexical* lir = new(alloc()) LThrowUninitializedLexical();
+    add(lir, ins);
+    assignSafepoint(lir, ins);
+}
+
+void
+LIRGenerator::visitGlobalNameConflictsCheck(MGlobalNameConflictsCheck* ins)
+{
+    LGlobalNameConflictsCheck* lir = new(alloc()) LGlobalNameConflictsCheck();
     add(lir, ins);
     assignSafepoint(lir, ins);
 }
@@ -4275,6 +4293,22 @@ void
 LIRGenerator::visitAtomicIsLockFree(MAtomicIsLockFree* ins)
 {
     define(new(alloc()) LAtomicIsLockFree(useRegister(ins->input())), ins);
+}
+
+void
+LIRGenerator::visitCheckReturn(MCheckReturn* ins)
+{
+    MDefinition* retVal = ins->returnValue();
+    MDefinition* thisVal = ins->thisValue();
+    MOZ_ASSERT(retVal->type() == MIRType_Value);
+    MOZ_ASSERT(thisVal->type() == MIRType_Value);
+
+    LCheckReturn* lir = new(alloc()) LCheckReturn();
+    useBoxAtStart(lir, LCheckReturn::ReturnValue, retVal);
+    useBoxAtStart(lir, LCheckReturn::ThisValue, thisVal);
+    assignSnapshot(lir, Bailout_BadDerivedConstructorReturn);
+    add(lir, ins);
+    redefine(ins, retVal);
 }
 
 static void

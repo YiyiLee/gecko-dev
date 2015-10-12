@@ -310,6 +310,7 @@ class BuildOptionParser(object):
         'tsan': 'builds/releng_sub_%s_configs/%s_tsan.py',
         'b2g-debug': 'b2g/releng_sub_%s_configs/%s_debug.py',
         'cross-debug': 'builds/releng_sub_%s_configs/%s_cross_debug.py',
+        'cross-opt': 'builds/releng_sub_%s_configs/%s_cross_opt.py',
         'debug': 'builds/releng_sub_%s_configs/%s_debug.py',
         'asan-and-debug': 'builds/releng_sub_%s_configs/%s_asan_and_debug.py',
         'stat-and-debug': 'builds/releng_sub_%s_configs/%s_stat_and_debug.py',
@@ -680,11 +681,18 @@ or run without that action (ie: --no-{action})"
             app_ini_path = dirs['abs_app_ini_path']
         if (os.path.exists(print_conf_setting_path) and
                 os.path.exists(app_ini_path)):
+            python = self.query_exe('python2.7')
             cmd = [
-                'python', print_conf_setting_path, app_ini_path,
+                python, os.path.join(dirs['abs_src_dir'], 'mach'), 'python',
+                print_conf_setting_path, app_ini_path,
                 'App', prop
             ]
-            return self.get_output_from_command(cmd, cwd=dirs['base_work_dir'])
+            env = self.query_build_env()
+            # dirs['abs_obj_dir'] can be different from env['MOZ_OBJDIR'] on
+            # mac, and that confuses mach.
+            del env['MOZ_OBJDIR']
+            return self.get_output_from_command_m(cmd,
+                cwd=dirs['abs_obj_dir'], env=env)
         else:
             return None
 
@@ -1306,18 +1314,24 @@ or run without that action (ie: --no-{action})"
                                             dirs['abs_app_ini_path']),
                      level=error_level)
         self.info("Setting properties found in: %s" % dirs['abs_app_ini_path'])
+        python = self.query_exe('python2.7')
         base_cmd = [
-            'python', print_conf_setting_path, dirs['abs_app_ini_path'], 'App'
+            python, os.path.join(dirs['abs_src_dir'], 'mach'), 'python',
+            print_conf_setting_path, dirs['abs_app_ini_path'], 'App'
         ]
         properties_needed = [
             {'ini_name': 'SourceStamp', 'prop_name': 'sourcestamp'},
             {'ini_name': 'Version', 'prop_name': 'appVersion'},
             {'ini_name': 'Name', 'prop_name': 'appName'}
         ]
+        env = self.query_build_env()
+        # dirs['abs_obj_dir'] can be different from env['MOZ_OBJDIR'] on
+        # mac, and that confuses mach.
+        del env['MOZ_OBJDIR']
         for prop in properties_needed:
-            prop_val = self.get_output_from_command(
-                base_cmd + [prop['ini_name']], cwd=dirs['base_work_dir'],
-                halt_on_failure=halt_on_failure
+            prop_val = self.get_output_from_command_m(
+                base_cmd + [prop['ini_name']], cwd=dirs['abs_obj_dir'],
+                halt_on_failure=halt_on_failure, env=env
             )
             self.set_buildbot_property(prop['prop_name'],
                                        prop_val,
@@ -1367,10 +1381,6 @@ or run without that action (ie: --no-{action})"
         # which is necessary before the virtualenv can be created.
         self.create_virtualenv()
         self.activate_virtualenv()
-
-        # Enable Taskcluster debug logging, so at least we get some debug
-        # messages while we are testing uploads.
-        logging.getLogger('taskcluster').setLevel(logging.DEBUG)
 
         routes_file = os.path.join(dirs['abs_src_dir'],
                                    'testing/taskcluster/routes.json')
@@ -1603,10 +1613,17 @@ or run without that action (ie: --no-{action})"
                                        'config',
                                        'printconfigsetting.py')
         abs_prev_ini_path = os.path.join(dirs['abs_obj_dir'], prev_ini_path)
-        previous_buildid = self.get_output_from_command(['python',
-                                                         print_conf_path,
-                                                         abs_prev_ini_path,
-                                                         'App', 'BuildID'])
+        python = self.query_exe('python2.7')
+        cmd = [
+            python, os.path.join(dirs['abs_src_dir'], 'mach'), 'python',
+            print_conf_path, abs_prev_ini_path, 'App', 'BuildID'
+        ]
+        env = self.query_build_env()
+        # dirs['abs_obj_dir'] can be different from env['MOZ_OBJDIR'] on
+        # mac, and that confuses mach.
+        del env['MOZ_OBJDIR']
+        previous_buildid = self.get_output_from_command_m(cmd,
+            cwd=dirs['abs_obj_dir'], env=env)
         if not previous_buildid:
             self.fatal("Could not determine previous_buildid. This property"
                        "requires the upload action creating a partial mar.")

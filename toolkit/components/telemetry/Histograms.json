@@ -1375,6 +1375,14 @@
     "releaseChannelCollection": "opt-out",
     "description": "The lifetime of accepted HTTPS server certificates, in weeks, up to 2 years. Bucket 105 is all end-entity HTTPS server certificates with a lifetime > 2 years."
   },
+  "KEYGEN_GENERATED_KEY_TYPE": {
+    "expires_in_version": "50",
+    "alert_emails": ["seceng-telemetry@mozilla.com"],
+    "kind": "count",
+    "keyed": "true",
+    "releaseChannelCollection": "opt-out",
+    "description": "The number of times we generate a key via keygen, keyed on algorithm and keysize. Keys include RSA with key size (512, 1024, 2048, possibly others), secp384r1, secp256r1, and 'other_ec'."
+  },
   "WEBSOCKETS_HANDSHAKE_TYPE": {
     "expires_in_version": "never",
     "kind": "enumerated",
@@ -5314,6 +5322,12 @@
     "kind": "flag",
     "description": "Whether enablePrivilege has ever been called during the current session"
   },
+  "SUBJECT_PRINCIPAL_ACCESSED_WITHOUT_SCRIPT_ON_STACK": {
+    "expires_in_version": "46",
+    "alert_emails": ["bholley@mozilla.com"],
+    "kind": "flag",
+    "description": "Whether the subject principal was accessed without script on the stack during the current session"
+  },
   "TOUCH_ENABLED_DEVICE": {
     "expires_in_version": "never",
     "kind": "boolean",
@@ -8868,6 +8882,38 @@
     "kind": "count",
     "description": "Counts the number of times that a sync has failed because of trying to sync before server backoff interval has passed."
   },
+  "ABOUT_ACCOUNTS_CONTENT_SERVER_LOAD_STARTED_COUNT": {
+    "alert_emails": ["mobile-frontend@mozilla.com"],
+    "expires_in_version": "50",
+    "kind": "count",
+    "keyed": true,
+    "description": "The number of remote content loads started. Keyed on fxa-content-server endpoint, like '/signin' or '/settings'."
+  },
+  "ABOUT_ACCOUNTS_CONTENT_SERVER_LOADED_RATE": {
+    "alert_emails": ["mobile-frontend@mozilla.com"],
+    "expires_in_version": "50",
+    "kind": "boolean",
+    "keyed": true,
+    "description": "The number of remote content loads that fail (0) vs. receive the remote 'LOADED' message (1). Keyed on fxa-content-server endpoint path, like '/signin' or '/settings'."
+  },
+  "ABOUT_ACCOUNTS_CONTENT_SERVER_LOADED_TIME_MS": {
+    "alert_emails": ["mobile-frontend@mozilla.com"],
+    "expires_in_version": "50",
+    "keyed": true,
+    "kind": "exponential",
+    "high": "60000",
+    "n_buckets": 50,
+    "description": "The length of time (in milliseconds) between starting remote content load and receiving the remote 'LOADED' message. Keyed on fxa-content-server endpoint path, like '/signin' or '/settings'."
+  },
+  "ABOUT_ACCOUNTS_CONTENT_SERVER_FAILURE_TIME_MS": {
+    "alert_emails": ["mobile-frontend@mozilla.com"],
+    "expires_in_version": "50",
+    "keyed": true,
+    "kind": "exponential",
+    "high": "60000",
+    "n_buckets": 50,
+    "description": "The length of time (in milliseconds) between starting remote content load and failing with a connection error. Keyed on fxa-content-server endpoint path, like '/signin' or '/settings'."
+  },
   "SLOW_SCRIPT_NOTICE_COUNT": {
     "alert_emails": ["perf-telemetry-alerts@mozilla.com"],
     "expires_in_version": "never",
@@ -9000,7 +9046,7 @@
   },
   "FENNEC_OPEN_URLS_IN_PRIVATE": {
     "alert_emails": ["margaret@mozilla.com"],
-    "expires_in_version": "44",
+    "expires_in_version": "45",
     "kind": "flag",
     "description": "Reports the state of the open external links in private tabs preference"
   },

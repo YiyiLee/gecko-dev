@@ -45,6 +45,7 @@ class ScriptFrameIter;
 class SPSProfiler;
 class InterpreterFrame;
 class StaticBlockObject;
+class ClonedBlockObject;
 
 class ScopeCoordinate;
 
@@ -451,6 +452,9 @@ class InterpreterFrame
     bool prologue(JSContext* cx);
     void epilogue(JSContext* cx);
 
+    bool checkReturn(JSContext* cx);
+    bool checkThis(JSContext* cx);
+
     bool initFunctionScopeObjects(JSContext* cx);
 
     /*
@@ -515,10 +519,10 @@ class InterpreterFrame
         return isEvalFrame() && !script()->strict();
     }
 
-    bool isDirectEvalFrame() const;
+    bool isNonGlobalEvalFrame() const;
 
     bool isNonStrictDirectEvalFrame() const {
-        return isNonStrictEvalFrame() && isDirectEvalFrame();
+        return isNonStrictEvalFrame() && isNonGlobalEvalFrame();
     }
 
     /*
@@ -616,7 +620,8 @@ class InterpreterFrame
     inline ScopeObject& aliasedVarScope(ScopeCoordinate sc) const;
     inline GlobalObject& global() const;
     inline CallObject& callObj() const;
-    inline JSObject& varObj();
+    inline JSObject& varObj() const;
+    inline ClonedBlockObject& extensibleLexicalScope() const;
 
     inline void pushOnScopeChain(ScopeObject& scope);
     inline void popOffScopeChain();
@@ -734,6 +739,14 @@ class InterpreterFrame
         if (flags_ & (EVAL | GLOBAL))
             return ((Value*)this)[-1];
         return argv()[-1];
+    }
+
+    void setDerivedConstructorThis(HandleObject thisv) {
+        MOZ_ASSERT(isNonEvalFunctionFrame());
+        MOZ_ASSERT(script()->isDerivedClassConstructor());
+        MOZ_ASSERT(callee().isClassConstructor());
+        MOZ_ASSERT(thisValue().isMagic(JS_UNINITIALIZED_LEXICAL));
+        argv()[-1] = ObjectValue(*thisv);
     }
 
     /*

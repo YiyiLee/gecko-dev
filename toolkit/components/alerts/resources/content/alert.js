@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+var {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 // Copied from nsILookAndFeel.h, see comments on eMetric_AlertNotificationOrigin
 const NS_ALERT_HORIZONTAL = 1;
@@ -32,9 +32,19 @@ function prefillAlertInfo() {
   // arguments[7] --> lang
   // arguments[8] --> replaced alert window (nsIDOMWindow)
   // arguments[9] --> an optional callback listener (nsIObserver)
+  // arguments[10] -> the localized alert source string
 
   switch (window.arguments.length) {
     default:
+    case 11: {
+      let label = document.getElementById('alertSourceLabel');
+      if (window.arguments[10]) {
+        label.hidden = false;
+        label.setAttribute('value', window.arguments[10]);
+      } else {
+        label.hidden = true;
+      }
+    }
     case 10:
       gAlertListener = window.arguments[9];
     case 9:
@@ -91,17 +101,19 @@ function onAlertLoad() {
 
   if (Services.prefs.getBoolPref("alerts.disableSlidingEffect")) {
     setTimeout(function() { window.close(); }, ALERT_DURATION_IMMEDIATE);
-    return;
+  } else {
+    let alertBox = document.getElementById("alertBox");
+    alertBox.addEventListener("animationend", function hideAlert(event) {
+      if (event.animationName == "alert-animation") {
+        alertBox.removeEventListener("animationend", hideAlert, false);
+        window.close();
+      }
+    }, false);
+    alertBox.setAttribute("animate", true);
   }
 
-  let alertBox = document.getElementById("alertBox");
-  alertBox.addEventListener("animationend", function hideAlert(event) {
-    if (event.animationName == "alert-animation") {
-      alertBox.removeEventListener("animationend", hideAlert, false);
-      window.close();
-    }
-  }, false);
-  alertBox.setAttribute("animate", true);
+  let ev = new CustomEvent("AlertActive", {bubbles: true, cancelable: true});
+  document.documentElement.dispatchEvent(ev);
 
   if (gAlertListener) {
     gAlertListener.observe(null, "alertshow", gAlertCookie);

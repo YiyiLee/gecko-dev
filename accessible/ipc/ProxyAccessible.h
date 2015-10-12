@@ -218,10 +218,25 @@ public:
   bool IsLinkValid();
 
   // XXX checking mRole alone may not result in same behavior as Accessibles
-  // due to ARIA roles
-  inline bool IsTable() const { return mRole == roles::TABLE; }
-  inline bool IsTableRow() const { return mRole == roles::ROW; }
-  inline bool IsTableCell() const { return mRole == roles::CELL; }
+  // due to ARIA roles. See bug 1210477.
+  inline bool IsTable() const
+  {
+    return mRole == roles::TABLE || mRole == roles::MATHML_TABLE;
+  }
+  inline bool IsTableRow() const
+  {
+    return (mRole == roles::ROW ||
+            mRole == roles::MATHML_TABLE_ROW ||
+            mRole == roles::MATHML_LABELED_ROW);
+  }
+  inline bool IsTableCell() const
+  {
+    return (mRole == roles::CELL ||
+            mRole == roles::COLUMNHEADER ||
+            mRole == roles::ROWHEADER ||
+            mRole == roles::GRID_CELL ||
+            mRole == roles::MATHML_CELL);
+  }
 
   uint32_t AnchorCount(bool* aOk);
 
@@ -282,6 +297,8 @@ public:
   void TableUnselectColumn(uint32_t aCol);
   void TableUnselectRow(uint32_t aRow);
   bool TableIsProbablyForLayout();
+  ProxyAccessible* AtkTableColumnHeader(int32_t aCol);
+  ProxyAccessible* AtkTableRowHeader(int32_t aRow);
 
   void SelectedItems(nsTArray<ProxyAccessible*>* aSelectedItems);
   uint32_t SelectedItemCount();
@@ -298,6 +315,7 @@ public:
   void ActionNameAt(uint8_t aIndex, nsString& aName);
   KeyBinding AccessKey();
   KeyBinding KeyboardShortcut();
+  void AtkKeyBinding(nsString& aBinding);
 
   double CurValue();
   bool SetCurValue(double aValue);
@@ -376,6 +394,8 @@ enum Interfaces
   TABLE = 16,
   TABLECELL = 32,
   DOCUMENT = 64,
+  SELECTION = 128,
+  ACTION = 256,
 };
 
 }

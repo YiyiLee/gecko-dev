@@ -6,6 +6,7 @@
 
 #include "mozilla/LoadContext.h"
 #include "mozilla/LoadInfo.h"
+#include "mozilla/BasePrincipal.h"
 #include "nsNetUtil.h"
 #include "nsNetUtil.inl"
 #include "mozIApplicationClearPrivateDataParams.h"
@@ -908,9 +909,9 @@ NS_GetReferrerFromChannel(nsIChannel *channel,
 }
 
 nsresult
-NS_ParseContentType(const nsACString &rawContentType,
-                    nsCString        &contentType,
-                    nsCString        &contentCharset)
+NS_ParseRequestContentType(const nsACString &rawContentType,
+                           nsCString        &contentType,
+                           nsCString        &contentCharset)
 {
     // contentCharset is left untouched if not present in rawContentType
     nsresult rv;
@@ -918,8 +919,26 @@ NS_ParseContentType(const nsACString &rawContentType,
     NS_ENSURE_SUCCESS(rv, rv);
     nsCString charset;
     bool hadCharset;
-    rv = util->ParseContentType(rawContentType, charset, &hadCharset,
-                                contentType);
+    rv = util->ParseRequestContentType(rawContentType, charset, &hadCharset,
+                                       contentType);
+    if (NS_SUCCEEDED(rv) && hadCharset)
+        contentCharset = charset;
+    return rv;
+}
+
+nsresult
+NS_ParseResponseContentType(const nsACString &rawContentType,
+                            nsCString        &contentType,
+                            nsCString        &contentCharset)
+{
+    // contentCharset is left untouched if not present in rawContentType
+    nsresult rv;
+    nsCOMPtr<nsINetUtil> util = do_GetNetUtil(&rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsCString charset;
+    bool hadCharset;
+    rv = util->ParseResponseContentType(rawContentType, charset, &hadCharset,
+                                        contentType);
     if (NS_SUCCEEDED(rv) && hadCharset)
         contentCharset = charset;
     return rv;
@@ -1208,6 +1227,20 @@ NS_UsePrivateBrowsing(nsIChannel *channel)
     nsCOMPtr<nsILoadContext> loadContext;
     NS_QueryNotificationCallbacks(channel, loadContext);
     return loadContext && loadContext->UsePrivateBrowsing();
+}
+
+bool
+NS_GetOriginAttributes(nsIChannel *aChannel,
+                       mozilla::OriginAttributes &aAttributes)
+{
+    nsCOMPtr<nsILoadContext> loadContext;
+    NS_QueryNotificationCallbacks(aChannel, loadContext);
+    if (!loadContext) {
+        return false;
+    }
+
+    loadContext->GetOriginAttributes(aAttributes);
+    return true;
 }
 
 bool

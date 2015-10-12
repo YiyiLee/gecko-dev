@@ -66,6 +66,7 @@ JSCompartment::JSCompartment(Zone* zone, const JS::CompartmentOptions& options =
     selfHostingScriptSource(nullptr),
     objectMetadataTable(nullptr),
     lazyArrayBuffers(nullptr),
+    nonSyntacticLexicalScopes_(nullptr),
     gcIncomingGrayPointers(nullptr),
     gcPreserveJitCode(options.preserveJitCode()),
     debugModeBits(0),
@@ -80,7 +81,8 @@ JSCompartment::JSCompartment(Zone* zone, const JS::CompartmentOptions& options =
     maybeAlive(true),
     jitCompartment_(nullptr),
     mappedArgumentsTemplate_(nullptr),
-    unmappedArgumentsTemplate_(nullptr)
+    unmappedArgumentsTemplate_(nullptr),
+    lcovOutput()
 {
     PodArrayZero(sawDeprecatedLanguageExtension);
     runtime_->numCompartments++;
@@ -91,6 +93,11 @@ JSCompartment::~JSCompartment()
 {
     reportTelemetry();
 
+    // Write the code coverage information in a file.
+    JSRuntime* rt = runtimeFromMainThread();
+    if (rt->lcovOutput.isEnabled())
+        rt->lcovOutput.writeLCovResult(lcovOutput);
+
     js_delete(jitCompartment_);
     js_delete(watchpointMap);
     js_delete(scriptCountsMap);
@@ -98,6 +105,7 @@ JSCompartment::~JSCompartment()
     js_delete(debugScopes);
     js_delete(objectMetadataTable);
     js_delete(lazyArrayBuffers);
+    js_delete(nonSyntacticLexicalScopes_),
     js_free(enumerators);
 
     runtime_->numCompartments--;
@@ -488,6 +496,48 @@ JSCompartment::wrap(JSContext* cx, MutableHandle<PropertyDescriptor> desc)
     return wrap(cx, desc.value());
 }
 
+ClonedBlockObject*
+JSCompartment::getOrCreateNonSyntacticLexicalScope(JSContext* cx,
+                                                   HandleObject enclosingStatic,
+                                                   HandleObject enclosingScope)
+{
+    if (!nonSyntacticLexicalScopes_) {
+        nonSyntacticLexicalScopes_ = cx->new_<ObjectWeakMap>(cx);
+        if (!nonSyntacticLexicalScopes_ || !nonSyntacticLexicalScopes_->init())
+            return nullptr;
+    }
+
+    // The key is the unwrapped dynamic scope, as we may be creating different
+    // DynamicWithObject wrappers each time.
+    MOZ_ASSERT(!enclosingScope->as<DynamicWithObject>().isSyntactic());
+    RootedObject key(cx, &enclosingScope->as<DynamicWithObject>().object());
+    RootedObject lexicalScope(cx, nonSyntacticLexicalScopes_->lookup(key));
+
+    if (!lexicalScope) {
+        lexicalScope = ClonedBlockObject::createNonSyntactic(cx, enclosingStatic, enclosingScope);
+        if (!lexicalScope)
+            return nullptr;
+        if (!nonSyntacticLexicalScopes_->add(cx, key, lexicalScope))
+            return nullptr;
+    }
+
+    return &lexicalScope->as<ClonedBlockObject>();
+}
+
+ClonedBlockObject*
+JSCompartment::getNonSyntacticLexicalScope(JSObject* enclosingScope) const
+{
+    if (!nonSyntacticLexicalScopes_)
+        return nullptr;
+    if (!enclosingScope->is<DynamicWithObject>())
+        return nullptr;
+    JSObject* key = &enclosingScope->as<DynamicWithObject>().object();
+    JSObject* lexicalScope = nonSyntacticLexicalScopes_->lookup(key);
+    if (!lexicalScope)
+        return nullptr;
+    return &lexicalScope->as<ClonedBlockObject>();
+}
+
 void
 JSCompartment::traceOutgoingCrossCompartmentWrappers(JSTracer* trc)
 {
@@ -530,7 +580,7 @@ JSCompartment::traceRoots(JSTracer* trc, js::gc::GCRuntime::TraceOrMarkRuntime t
 {
     if (objectMetadataState.is<PendingMetadata>()) {
         TraceRoot(trc,
-                  objectMetadataState.as<PendingMetadata>().unsafeGet(),
+                  objectMetadataState.as<PendingMetadata>().unsafeUnbarrieredForTracing(),
                   "on-stack object pending metadata");
     }
 
@@ -544,7 +594,7 @@ JSCompartment::traceRoots(JSTracer* trc, js::gc::GCRuntime::TraceOrMarkRuntime t
         // If a compartment is on-stack, we mark its global so that
         // JSContext::global() remains valid.
         if (enterCompartmentDepth && global_.unbarrieredGet())
-            TraceRoot(trc, global_.unsafeGet(), "on-stack compartment global");
+            TraceRoot(trc, global_.unsafeUnbarrieredForTracing(), "on-stack compartment global");
     }
 
     // Nothing below here needs to be treated as a root if we aren't marking
@@ -568,7 +618,23 @@ JSCompartment::traceRoots(JSTracer* trc, js::gc::GCRuntime::TraceOrMarkRuntime t
     if (objectMetadataTable)
         objectMetadataTable->trace(trc);
 
-    if (scriptCountsMap && !trc->runtime()->isHeapMinorCollecting()) {
+    // If code coverage is only enabled with the Debugger or the LCovOutput,
+    // then the following comment holds.
+    //
+    // The scriptCountsMap maps JSScript weak-pointers to ScriptCounts
+    // structures. It uses a HashMap instead of a WeakMap, so that we can keep
+    // the data alive for the JSScript::finalize call. Thus, we do not trace the
+    // keys of the HashMap to avoid adding a strong reference to the JSScript
+    // pointers. Additionally, we assert that the JSScripts have not been moved
+    // in JSCompartment::fixupAfterMovingGC.
+    //
+    // If the code coverage is either enabled with the --dump-bytecode command
+    // line option, or with the PCCount JSFriend API functions, then we mark the
+    // keys of the map to hold the JSScript alive.
+    if (scriptCountsMap &&
+        trc->runtime()->profilingScripts &&
+        !trc->runtime()->isHeapMinorCollecting())
+    {
         MOZ_ASSERT_IF(!trc->runtime()->isBeingDestroyed(), collectCoverage());
         for (ScriptCountsMap::Range r = scriptCountsMap->all(); !r.empty(); r.popFront()) {
             JSScript* script = const_cast<JSScript*>(r.front().key());
@@ -577,6 +643,9 @@ JSCompartment::traceRoots(JSTracer* trc, js::gc::GCRuntime::TraceOrMarkRuntime t
             MOZ_ASSERT(script == r.front().key(), "const_cast is only a work-around");
         }
     }
+
+    if (nonSyntacticLexicalScopes_)
+        nonSyntacticLexicalScopes_->trace(trc);
 }
 
 void
@@ -748,6 +817,18 @@ JSCompartment::fixupAfterMovingGC()
     fixupGlobal();
     fixupInitialShapeTable();
     objectGroups.fixupTablesAfterMovingGC();
+
+#ifdef DEBUG
+    // Assert that none of the JSScript pointers, which are used as key of the
+    // scriptCountsMap HashMap are moved. We do not mark these keys because we
+    // need weak references. We do not use a WeakMap because these entries would
+    // be collected before the JSScript::finalize calls which is used to
+    // summarized the content of the code coverage.
+    if (scriptCountsMap) {
+        for (ScriptCountsMap::Range r = scriptCountsMap->all(); !r.empty(); r.popFront())
+            MOZ_ASSERT(!IsForwarded(r.front().key()));
+    }
+#endif
 }
 
 void
@@ -972,9 +1053,8 @@ JSCompartment::updateDebuggerObservesCoverage()
         return;
     }
 
-    // If the runtime flag is enabled, then keep the data until
-    // StopPCCountProfiling is called.
-    if (runtimeFromMainThread()->profilingScripts)
+    // If code coverage is enabled by any other means, keep it.
+    if (collectCoverage())
         return;
 
     clearScriptCounts();
@@ -1019,7 +1099,8 @@ JSCompartment::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
                                       size_t* objectMetadataTablesArg,
                                       size_t* crossCompartmentWrappersArg,
                                       size_t* regexpCompartment,
-                                      size_t* savedStacksSet)
+                                      size_t* savedStacksSet,
+                                      size_t* nonSyntacticLexicalScopesArg)
 {
     *compartmentObject += mallocSizeOf(this);
     objectGroups.addSizeOfExcludingThis(mallocSizeOf, tiAllocationSiteTables,
@@ -1035,6 +1116,8 @@ JSCompartment::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
     *crossCompartmentWrappersArg += crossCompartmentWrappers.sizeOfExcludingThis(mallocSizeOf);
     *regexpCompartment += regExps.sizeOfExcludingThis(mallocSizeOf);
     *savedStacksSet += savedStacks_.sizeOfExcludingThis(mallocSizeOf);
+    if (nonSyntacticLexicalScopes_)
+        *nonSyntacticLexicalScopesArg += nonSyntacticLexicalScopes_->sizeOfIncludingThis(mallocSizeOf);
 }
 
 void

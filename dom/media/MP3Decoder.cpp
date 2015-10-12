@@ -10,10 +10,7 @@
 #include "MediaFormatReader.h"
 #include "MP3Demuxer.h"
 #include "mozilla/Preferences.h"
-
-#ifdef MOZ_WIDGET_ANDROID
-#include "AndroidBridge.h"
-#endif
+#include "PDMFactory.h"
 
 namespace mozilla {
 
@@ -32,14 +29,23 @@ MP3Decoder::CreateStateMachine() {
   return new MediaDecoderStateMachine(this, reader);
 }
 
+/* static */
 bool
 MP3Decoder::IsEnabled() {
-#ifdef MOZ_WIDGET_ANDROID
-  // We need android.media.MediaCodec which exists in API level 16 and higher.
-  return AndroidBridge::Bridge()->GetAPIVersion() >= 16;
-#else
-  return Preferences::GetBool("media.mp3.enabled");
-#endif
+  PDMFactory::Init();
+  nsRefPtr<PDMFactory> platform = new PDMFactory();
+  return platform->SupportsMimeType(NS_LITERAL_CSTRING("audio/mpeg"));
+}
+
+/* static */
+bool MP3Decoder::CanHandleMediaType(const nsACString& aType,
+                                    const nsAString& aCodecs)
+{
+  if (aType.EqualsASCII("audio/mp3") || aType.EqualsASCII("audio/mpeg")) {
+    return IsEnabled() &&
+      (aCodecs.IsEmpty() || aCodecs.EqualsASCII("mp3"));
+  }
+  return false;
 }
 
 } // namespace mozilla

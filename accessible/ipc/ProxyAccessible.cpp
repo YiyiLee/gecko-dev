@@ -820,6 +820,24 @@ ProxyAccessible::TableIsProbablyForLayout()
   return forLayout;
 }
 
+ProxyAccessible*
+ProxyAccessible::AtkTableColumnHeader(int32_t aCol)
+{
+  uint64_t headerID = 0;
+  bool ok = false;
+  unused << mDoc->SendAtkTableColumnHeader(mID, aCol, &headerID, &ok);
+  return ok ? mDoc->GetAccessible(headerID) : nullptr;
+}
+
+ProxyAccessible*
+ProxyAccessible::AtkTableRowHeader(int32_t aRow)
+{
+  uint64_t headerID = 0;
+  bool ok = false;
+  unused << mDoc->SendAtkTableRowHeader(mID, aRow, &headerID, &ok);
+  return ok ? mDoc->GetAccessible(headerID) : nullptr;
+}
+
 void
 ProxyAccessible::SelectedItems(nsTArray<ProxyAccessible*>* aSelectedItems)
 {
@@ -934,6 +952,12 @@ ProxyAccessible::KeyboardShortcut()
   return KeyBinding(key, modifierMask);
 }
 
+void
+ProxyAccessible::AtkKeyBinding(nsString& aBinding)
+{
+  unused << mDoc->SendAtkKeyBinding(mID, &aBinding);
+}
+
 double
 ProxyAccessible::CurValue()
 {
@@ -1000,6 +1024,14 @@ ProxyAccessible::IndexOfEmbeddedChild(const ProxyAccessible* aChild)
 ProxyAccessible*
 ProxyAccessible::EmbeddedChildAt(size_t aChildIdx)
 {
+  // For an outer doc the only child is a document, which is of course an
+  // embedded child.  Further asking the child process for the id of the child
+  // document won't work because the id of the child doc will be 0, which we
+  // would interpret as being our parent document.
+  if (mOuterDoc) {
+    return ChildAt(aChildIdx);
+  }
+
   uint64_t childID;
   unused << mDoc->SendEmbeddedChildAt(mID, aChildIdx, &childID);
   return mDoc->GetAccessible(childID);

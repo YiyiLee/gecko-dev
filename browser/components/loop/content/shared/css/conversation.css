@@ -15,10 +15,10 @@ button::-moz-focus-inner {
   z-index: 1020; /* required to have it superimposed to the video element */
   border: 0;
   left: 1.2rem;
-  right: .7rem;
-  height: 2.6rem;
+  right: 1.2rem;
+  height: 2.4rem;
   position: absolute;
-  bottom: 1.5rem;
+  bottom: 1.2rem;
 }
 
 html[dir="rtl"] .conversation-toolbar {
@@ -53,6 +53,12 @@ html[dir="rtl"] .conversation-toolbar > li {
   background-color: transparent;
   height: 28px;
   width: 33px;
+}
+
+.btn-hangup-entry > .btn {
+  /* Make the button the width of the background, so that we don't get an
+     extra gap which appears to push the toolbar in further than necessary */
+  width: 28px;
 }
 
 .conversation-toolbar-media-btn-group-box {
@@ -97,56 +103,7 @@ html[dir="rtl"] .conversation-toolbar-btn-box.btn-edit-entry {
   float: left;
 }
 
-.fx-embedded-answer-btn-text {
-  /* always leave space for the icon (width and margin) */
-  max-width: calc(100% - 24px - .2rem);
-  height: 22px;
-  line-height: 22px;
-}
-
-.fx-embedded-btn-icon-video,
-.fx-embedded-btn-icon-audio {
-  width: 24px;
-  height: 24px;
-  display: inline-block;
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 14px 14px;
-  border-radius: 50%;
-  -moz-margin-start: .2rem;
-}
-
 /* conversationViews.jsx */
-
-.fx-embedded-btn-icon-video,
-.fx-embedded-btn-video-small,
-.fx-embedded-tiny-video-icon {
-  background-image: url("../img/video-inverse-14x14.png");
-}
-
-.fx-embedded-btn-icon-audio,
-.fx-embedded-btn-audio-small,
-.fx-embedded-tiny-audio-icon {
-  background-image: url("../img/audio-inverse-14x14.png");
-}
-
-.fx-embedded-btn-audio-small,
-.fx-embedded-btn-video-small {
-  width: 26px;
-  height: 26px;
-  border-left: 1px solid rgba(255,255,255,.4);
-  background-color: #56b397;
-  border-top-right-radius: 2px;
-  border-bottom-right-radius: 2px;
-  background-position: center;
-  background-repeat: no-repeat;
-  cursor: pointer;
-}
-
-  .fx-embedded-btn-video-small:hover,
-  .fx-embedded-btn-audio-small:hover {
-    background-color: #50e3c2;
-  }
 
 .conversation-toolbar .btn-hangup {
   background-image: url("../img/svg/exit.svg");
@@ -223,23 +180,6 @@ html[dir="rtl"] .conversation-toolbar-btn-box.btn-edit-entry {
 
 /* General Call (incoming or outgoing). */
 
-/* XXX call-window currently relates to multiple things like the AcceptCallView,
-   DirectCallFailureView, PendingConversationView. It doesn't relate to the direct
-   call media views. We should probably make this more explicit at some stage. */
-
-/*
- * Height matches the height of the docked window
- * but the UI breaks when you pop out
- * Bug 1040985
- */
-.call-window {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 230px;
-}
-
 .call-action-group {
   display: flex;
   padding: 0 4px;
@@ -268,7 +208,42 @@ html[dir="rtl"] .conversation-toolbar-btn-box.btn-edit-entry {
   width: 100%;
 }
 
-.direct-call-failure,
+.call-action-group > .invite-button {
+  cursor: pointer;
+  margin: 0 4px;
+  position: relative;
+}
+
+.call-action-group > .invite-button > img {
+  background-color: #00a9dc;
+  border-radius: 100%;
+  height: 28px;
+  width: 28px;
+}
+
+.call-action-group > .invite-button:hover > img {
+  background-color: #5cccee;
+}
+
+.call-action-group > .invite-button.triggered > img {
+  background-color: #56b397;
+}
+
+.call-action-group > .invite-button > p {
+  display: none;
+  /* Position the text under the button while centering it without impacting the
+   * rest of the layout */
+  left: -10rem;
+  margin: .5rem 0 0;
+  position: absolute;
+  right: -10rem;
+}
+
+.call-action-group > .invite-button.triggered > p,
+.call-action-group > .invite-button:hover > p {
+  display: block;
+}
+
 .room-failure {
   /* This flex allows us to not calculate the height of the logo area
      versus the buttons */
@@ -280,25 +255,21 @@ html[dir="rtl"] .conversation-toolbar-btn-box.btn-edit-entry {
   height: 100%;
 }
 
-.direct-call-failure > .call-action-group,
 .room-failure > .call-action-group {
   flex: none;
   margin: 1rem 0 2rem;
 }
 
-.direct-call-failure > .failure-info,
 .room-failure > .failure-info {
   flex: auto;
 }
 
-.direct-call-failure > .settings-control,
 .room-failure > .settings-control {
   position: absolute;
   top: 1rem;
   right: .5rem;
 }
 
-html[dir="rtl"] .direct-call-failure > .settings-control,
 html[dir="rtl"] .room-failure > .settings-control {
   left: .5rem;
   right: auto;
@@ -348,63 +319,13 @@ html[dir="rtl"] .room-failure > .settings-control {
   color: #f00;
 }
 
-.fx-embedded-call-button-spacer {
-  display: flex;
-  flex: 1;
-}
-
-/*
- * Dropdown menu hidden behind a chevron
- *
- * .native-dropdown-menu Generic class, contains common styles
- * .conversation-window-dropdown Dropdown menu for answer/decline/block options
- */
-
-.native-dropdown-menu {
-  /* Should match a native select menu */
-  padding: 0;
-  position: absolute; /* element can be wider than the parent */
-  background: #fff;
-  margin: 0;
-  box-shadow: 0 4px 5px rgba(30,30,30,.3);
-  border-style: solid;
-  border-width: 1px 1px 1px 2px;
-  border-color: #aaa #111 #111 #aaa;
-}
-
-  .native-dropdown-menu li {
-    list-style: none;
-    cursor: pointer;
-    color: #000;
-  }
-
-  .native-dropdown-menu li:hover {
-    color: #fff;
-    background-color: #111;
-  }
-
-.conversation-window-dropdown {
-  bottom: 4rem;
-}
-
-.conversation-window-dropdown > li {
-  padding: .2rem;
-  font-size: 1rem;
-  white-space: nowrap;
-}
-
 .screen-share-menu.dropdown-menu,
 .settings-menu.dropdown-menu {
-  left: auto;
   bottom: 3.1rem;
 }
 
-.screen-share-menu.dropdown-menu {
-  /*offset dropdown menu to be above menu button*/
-  right: 40px;
-}
-
 .settings-menu.dropdown-menu {
+  left: auto;
   /*offset dropdown menu to be above menu button*/
   right: 14px;
 }
@@ -530,79 +451,11 @@ html[dir="rtl"] .settings-menu.dropdown-menu {
   opacity: 0.25;
 }
 
-.fx-embedded-call-identifier {
-  display: inline;
-  width: 100%;
-  padding: 1.2em;
-}
-
-.fx-embedded-call-identifier-item {
-  height: 50px;
-}
-
-.fx-embedded-call-identifier-avatar {
-  max-width: 50px;
-  min-width: 50px;
-  background: #ccc;
-  border-radius: 50%;
-  background-image: url("../img/audio-call-avatar.svg");
-  background-repeat: no-repeat;
-  background-color: #4ba6e7;
-  background-size: contain;
-  overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.3);
-  float: left;
-  -moz-margin-end: 1em;
-}
-
-.fx-embedded-call-identifier-text {
-  font-weight: bold;
-}
-
-.fx-embedded-call-identifier-info {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  -moz-margin-start: 1em;
-}
-
-.fx-embedded-conversation-timestamp {
-  font-size: .6rem;
-  line-height: 17px;
-  display: inline-block;
-  vertical-align: top;
-}
-
-.fx-embedded-call-detail {
-  padding-top: 0.6em;
-}
-
-.fx-embedded-tiny-video-icon {
-  margin: 0 .8em;
-}
-
-.fx-embedded-tiny-audio-icon,
-.fx-embedded-tiny-video-icon {
-  width: 24px;
-  height: 24px;
-  background-color: #00a9dc;
-  display: inline-block;
-  background-repeat: no-repeat;
-  background-position: center;
-  border-radius: 50%;
-}
-
-  .fx-embedded-tiny-video-icon.muted {
-    background-color: rgba(0,0,0,.2)
-  }
-
 /* Force full height on all parents up to the video elements
  * this way we can ensure the aspect ratio and use height 100%
  * on the video element
  * */
 html, .fx-embedded, #main,
-.desktop-call-wrapper,
 .desktop-room-wrapper {
   height: 100%;
 }
@@ -663,53 +516,25 @@ html[dir="rtl"] .room-conversation-wrapper header a {
 
 .room-invitation-overlay {
   position: absolute;
-  background: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.85);
   top: 0;
   height: 100%;
   right: 0;
   left: 0;
   text-align: center;
-  color: #fff;
+  color: #000;
   z-index: 1010;
   display: flex;
   flex-flow: column nowrap;
-  justify-content: flex-start;
+  justify-content: center;
   align-items: stretch;
 }
 
 .room-invitation-content {
-  flex: 1 1 auto;
   display: flex;
   flex-flow: column nowrap;
   justify-content: center;
   align-items: center;
-}
-
-.room-invitation-overlay .btn-group {
-  padding: 0 0 5rem 0;
-}
-
-.room-invitation-addcontext {
-  color: #0095dd;
-  padding-left: 1.5em;
-  margin-bottom: 1em;
-  background-image: url("../img/icons-10x10.svg#edit-active");
-  background-size: 1em 1em;
-  background-repeat: no-repeat;
-  background-position: left top;
-  font-size: 1em;
-  cursor: pointer;
-}
-
-.room-invitation-addcontext:hover,
-.room-invitation-addcontext:hover:active {
-  text-decoration: underline;
-}
-
-html[dir="rtl"] .room-invitation-addcontext {
-  padding-left: 0;
-  padding-right: 1.5em;
-  background-position: right top;
 }
 
 .share-service-dropdown {
@@ -750,9 +575,7 @@ body[platform="win"] .share-service-dropdown.overflow > .dropdown-menu-item {
 }
 
 .context-url-view-wrapper {
-  /* 18px for indent of .text-chat-arrow, 1px for border of .text-chat-entry > p,
-     0.5rem for padding of .text-chat-entry > p */
-  padding: calc(18px - 1px - 0.5rem);
+  padding: 12px;
   margin-bottom: 0.5em;
   background-color: #dbf7ff;
 }
@@ -804,6 +627,7 @@ body[platform="win"] .share-service-dropdown.overflow > .dropdown-menu-item {
   text-shadow: 1px 1px 0 rgba(0,0,0,.3);
 }
 
+.room-invitation-content,
 .room-context-header {
   color: #333;
   font-size: 1.2rem;
@@ -853,8 +677,8 @@ body[platform="win"] .share-service-dropdown.overflow > .dropdown-menu-item {
 }
 
 .standalone-room-wrapper > .media-layout {
-  /* 50px is the header, 3em is the footer. */
-  height: calc(100% - 50px - 3em);
+  /* 50px is the header, 10px is the bottom margin. */
+  height: calc(100% - 50px - 10px);
   margin: 0 10px;
 }
 
@@ -935,7 +759,6 @@ body[platform="win"] .share-service-dropdown.overflow > .dropdown-menu-item {
   height: calc(100% - 300px);
 }
 
-.desktop-call-wrapper > .media-layout > .media-wrapper > .text-chat-view,
 .desktop-room-wrapper > .media-layout > .media-wrapper > .text-chat-view {
   height: calc(100% - 150px);
 }
@@ -975,8 +798,8 @@ body[platform="win"] .share-service-dropdown.overflow > .dropdown-menu-item {
 
 @media screen and (max-width:640px) {
   .standalone-room-wrapper > .media-layout {
-    /* 50px is height of header, 25px is height of footer. */
-    height: calc(100% - 50px - 25px);
+    /* 50px is height of header, 10px is bottom margin. */
+    height: calc(100% - 50px - 10px);
   }
 
   .media-layout > .media-wrapper {
@@ -1062,7 +885,6 @@ body[platform="win"] .share-service-dropdown.overflow > .dropdown-menu-item {
   }
 
 
-  .desktop-call-wrapper > .media-layout > .media-wrapper > .text-chat-view,
   .desktop-room-wrapper > .media-layout > .media-wrapper > .text-chat-view {
     /* This is temp, to echo the .media-wrapper > .text-chat-view above */
     height: 30%;
@@ -1110,7 +932,7 @@ body[platform="win"] .share-service-dropdown.overflow > .dropdown-menu-item {
 }
 
 /* e.g. very narrow widths similar to conversation window */
-@media screen and (max-width:300px) {
+@media screen and (max-width:350px) {
   .media-layout > .media-wrapper {
     flex-flow: column nowrap;
   }
@@ -1174,32 +996,44 @@ body[platform="win"] .share-service-dropdown.overflow > .dropdown-menu-item {
   background: white;
 }
 
-.text-chat-box {
-  flex: 0 0 auto;
-  max-height: 40px;
-  min-height: 40px;
-  width: 100%;
-}
-
 .text-chat-entries {
   overflow: auto;
 }
 
-.text-chat-entry {
+.text-chat-entry,
+.text-chat-header {
   display: flex;
-  flex-direction: row;
-  margin-right: .2em;
   margin-bottom: .5em;
-  text-align: start;
-  flex-wrap: nowrap;
-  justify-content: flex-start;
-  align-content: stretch;
   align-items: flex-start;
 }
 
-html[dir="rtl"] .text-chat-entry {
-  margin-right: auto;
-  margin-left: .2em;
+.text-chat-entry {
+  /* aligns paragraph to side where reading starts from */
+  text-align: start;
+}
+
+/* Sent text chat entries should be on the right */
+.text-chat-entry.sent {
+  /* aligns paragraph to right side */
+  justify-content: flex-end;
+  margin-left: 0;
+  margin-right: 5px;
+}
+
+.text-chat-entry.received {
+  margin-left: 4px;
+  margin-right: 0;
+}
+
+html[dir="rtl"] .text-chat-entry.sent {
+  margin-left: 5px;
+  margin-right: 0;
+}
+
+
+html[dir="rtl"] .text-chat-entry.received {
+  margin-left: 0;
+  margin-right: 5px;
 }
 
 /* If you change this entry, check it doesn't affect the "special" text
@@ -1209,57 +1043,34 @@ html[dir="rtl"] .text-chat-entry {
   z-index: 10;
   /* Drop the default margins from the 'p' element. */
   margin: 0;
-  padding: .5rem;
+  padding: .8rem;
   /* leave some room for the chat bubble arrow */
-  max-width: 80%;
-  border-width: 1px;
-  border-style: solid;
-  border-color: #5cccee;
+  max-width: 70%;
+  border-radius: 15px;
+  border: 1px solid #5cccee;
   background: #fff;
   word-wrap: break-word;
   flex: 0 1 auto;
-  align-self: auto;
-}
-
-.text-chat-entry.sent > p,
-.text-chat-entry.received > p {
-  background: #fff;
+  order: 1;
 }
 
 .text-chat-entry.sent > p {
-  border-radius: 15px;
   border-bottom-right-radius: 0;
 }
 
 .text-chat-entry.received > p {
-  border-radius: 15px;
   border-top-left-radius: 0;
+  border-color: #d8d8d8;
 }
 
 html[dir="rtl"] .text-chat-entry.sent > p {
-  border-radius: 15px;
   border-bottom-left-radius: 0;
+  border-bottom-right-radius: 15px;
 }
 
 html[dir="rtl"] .text-chat-entry.received > p {
-  border-radius: 15px;
   border-top-right-radius: 0;
-}
-
-.text-chat-entry.received > p {
-  order: 1;
-}
-
-.text-chat-entry.sent > p {
-  order: 1;
-}
-
-.text-chat-entry.received {
-  text-align: start;
-}
-
-.text-chat-entry.received > p {
-  border-color: #d8d8d8;
+  border-top-left-radius: 15px;
 }
 
 /* Text chat entry timestamp */
@@ -1272,38 +1083,34 @@ html[dir="rtl"] .text-chat-entry.received > p {
   align-self: center;
 }
 
-/* Sent text chat entries should be on the right */
-.text-chat-entry.sent {
-  justify-content: flex-end;
-}
-
 .received > .text-chat-entry-timestamp {
   order: 2;
 }
 
-/* Pseudo element used to cover part between chat bubble and chat arrow. */
+/* Pseudo element used to cover part between chat bubble and chat arrow.
+   dimensions may change for each position */
 .text-chat-entry > p:after {
   position: absolute;
   background: #fff;
   content: "";
+  /* default dimensions */
+  width: 6px;
+  height: 7px;
 }
 
 .text-chat-entry.sent > p:after {
-  right: -2px;
+  right: -1px;
   bottom: 0;
-  width: 15px;
-  height: 9px;
-  border-top-left-radius: 15px;
-  border-top-right-radius: 22px;
+  width: 7px;
+  border-top-left-radius: 4px;
+  border-top-right-radius: 4px;
 }
 
 .text-chat-entry.received > p:after {
   top: 0;
-  left: -2px;
-  width: 15px;
-  height: 9px;
-  border-bottom-left-radius: 22px;
-  border-bottom-right-radius: 15px;
+  left: -1px;
+  border-bottom-left-radius: 4px;
+  border-bottom-right-radius: 4px;
 }
 
 html[dir="rtl"] .text-chat-entry.sent > p:after {
@@ -1311,16 +1118,13 @@ html[dir="rtl"] .text-chat-entry.sent > p:after {
   right: auto;
   left: -1px;
   bottom: 0;
-  width: 15px;
-  height: 9px;
 }
 
 html[dir="rtl"] .text-chat-entry.received > p:after {
   /* Reset */
-  left: auto;
   top: 0;
   right: -1px;
-  width: 15px;
+  width: 9px;
   height: 6px;
 }
 
@@ -1366,7 +1170,7 @@ html[dir="rtl"] .text-chat-entry.received .text-chat-arrow {
   margin-left: -10px;
 }
 
-.text-chat-entry.special.room-name {
+.text-chat-header.special.room-name {
   color: black;
   font-weight: bold;
   text-align: start;
@@ -1375,7 +1179,7 @@ html[dir="rtl"] .text-chat-entry.received .text-chat-arrow {
   margin-right: 0;
 }
 
-.text-chat-entry.special.room-name p {
+.text-chat-header.special.room-name p {
   background: #dbf7ff;
   max-width: 100%;
   /* 18px for indent of .text-chat-arrow, 1px for border of .text-chat-entry > p,
@@ -1383,12 +1187,16 @@ html[dir="rtl"] .text-chat-entry.received .text-chat-arrow {
   padding: calc(18px - 1px - 0.5rem);
 }
 
-.text-chat-entry.special > p {
+.text-chat-header.special > p {
   border: none;
 }
 
 .text-chat-box {
   margin: auto;
+  flex: 0 0 auto;
+  max-height: 40px;
+  min-height: 40px;
+  width: 100%;
 }
 
 .text-chat-box > form > input {
@@ -1439,8 +1247,8 @@ html[dir="rtl"] .text-chat-entry.received .text-chat-arrow {
     left: 0;
   }
   .standalone .room-conversation-wrapper .video-layout-wrapper {
-    /* 50px: header's height; 25px: footer's height */
-    height: calc(100% - 50px - 25px);
+    /* 50px: header's height; 10px: bottom margin */
+    height: calc(100% - 50px - 10px);
   }
   .standalone .room-conversation .video_wrapper.remote_wrapper {
     width: 100%;
@@ -1451,7 +1259,7 @@ html[dir="rtl"] .text-chat-entry.received .text-chat-arrow {
 }
 
 /* e.g. very narrow widths similar to conversation window */
-@media screen and (max-width:300px) {
+@media screen and (max-width:350px) {
   .text-chat-view {
     display: flex;
     flex-flow: column nowrap;

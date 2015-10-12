@@ -7,7 +7,6 @@ browser.jar:
 #include ../shared/jar.inc.mn
   skin/classic/browser/sanitizeDialog.css
   skin/classic/browser/aboutSessionRestore-window-icon.png
-  skin/classic/browser/aboutCertError.css
   skin/classic/browser/aboutCertError_sectionCollapsed.png
   skin/classic/browser/aboutCertError_sectionCollapsed-rtl.png
   skin/classic/browser/aboutCertError_sectionExpanded.png
@@ -25,8 +24,6 @@ browser.jar:
   skin/classic/browser/content-contextmenu.svg
   skin/classic/browser/Geolocation-16.png
   skin/classic/browser/Geolocation-64.png
-  skin/classic/browser/Push-16.png
-  skin/classic/browser/Push-64.png
   skin/classic/browser/Info.png
   skin/classic/browser/Info-XP.png
   skin/classic/browser/keyhole-forward-mask.svg
@@ -53,8 +50,6 @@ browser.jar:
   skin/classic/browser/menuPanel-small-aero@2x.png
   skin/classic/browser/monitor.png
   skin/classic/browser/monitor_16-10.png
-  skin/classic/browser/notification-16.png
-  skin/classic/browser/notification-64.png
   skin/classic/browser/pageInfo.css
   skin/classic/browser/pageInfo.png
   skin/classic/browser/pageInfo-XP.png
@@ -92,6 +87,7 @@ browser.jar:
   skin/classic/browser/urlbar-history-dropmarker@2x.png
   skin/classic/browser/urlbar-history-dropmarker-preWin10.png
   skin/classic/browser/urlbar-history-dropmarker-preWin10@2x.png
+  skin/classic/browser/webRTC-indicator.css
   skin/classic/browser/loop/menuPanel.png                      (loop/menuPanel.png)
   skin/classic/browser/loop/menuPanel@2x.png                   (loop/menuPanel@2x.png)
   skin/classic/browser/loop/menuPanel-aero.png                 (loop/menuPanel-aero.png)

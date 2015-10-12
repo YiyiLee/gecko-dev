@@ -157,6 +157,7 @@ const XPI_SIGNATURE_CHECK_PERIOD      = 24 * 60 * 60;
 
 // The value for this is in Makefile.in
 #expand const DB_SCHEMA                       = __MOZ_EXTENSIONS_DB_SCHEMA__;
+XPCOMUtils.defineConstant(this, "DB_SCHEMA", DB_SCHEMA);
 const NOTIFICATION_TOOLBOXPROCESS_LOADED      = "ToolboxProcessLoaded";
 
 // Properties that exist in the install manifest
@@ -290,6 +291,7 @@ function loadLazyObjects() {
     recordAddonTelemetry,
     applyBlocklistChanges,
     flushStartupCache,
+    canRunInSafeMode,
   }
 
   for (let key of Object.keys(shared))
@@ -632,6 +634,21 @@ function applyBlocklistChanges(aOldAddon, aNewAddon, aOldAppVersion,
 }
 
 /**
+ * Evaluates whether an add-on is allowed to run in safe mode.
+ *
+ * @param  aAddon
+ *         The add-on to check
+ * @return true if the add-on should run in safe mode
+ */
+function canRunInSafeMode(aAddon) {
+  // Even though the updated system add-ons aren't generally run in safe mode we
+  // include them here so their uninstall functions get called when switching
+  // back to the default set.
+  return aAddon._installLocation.name == KEY_APP_SYSTEM_DEFAULTS ||
+         aAddon._installLocation.name == KEY_APP_SYSTEM_ADDONS;
+}
+
+/**
  * Calculates whether an add-on should be appDisabled or not.
  *
  * @param  aAddon
@@ -643,17 +660,16 @@ function isUsableAddon(aAddon) {
   if (aAddon.type == "theme" && aAddon.internalName == XPIProvider.defaultSkin)
     return true;
 
-  if (mustSign(aAddon.type)) {
+  if (aAddon._installLocation.name == KEY_APP_SYSTEM_ADDONS &&
+      aAddon.signedState != AddonManager.SIGNEDSTATE_SYSTEM) {
+    return false;
+  }
+
+  if (aAddon._installLocation.name != KEY_APP_SYSTEM_DEFAULTS && mustSign(aAddon.type)) {
     if (aAddon.signedState <= AddonManager.SIGNEDSTATE_MISSING)
       return false;
     if (aAddon.foreignInstall && aAddon.signedState < AddonManager.SIGNEDSTATE_SIGNED)
       return false;
-
-    if (aAddon._installLocation.name == KEY_APP_SYSTEM_ADDONS ||
-        aAddon._installLocation.name == KEY_APP_SYSTEM_DEFAULTS) {
-      if (aAddon.signedState != AddonManager.SIGNEDSTATE_SYSTEM)
-        return false;
-    }
   }
 
   if (aAddon.blocklistState == Blocklist.STATE_BLOCKED)
@@ -703,7 +719,8 @@ function createAddonDetails(id, aAddon) {
     id: id || aAddon.id,
     type: aAddon.type,
     version: aAddon.version,
-    multiprocessCompatible: aAddon.multiprocessCompatible
+    multiprocessCompatible: aAddon.multiprocessCompatible,
+    runInSafeMode: aAddon.runInSafeMode,
   };
 }
 
@@ -2507,7 +2524,7 @@ this.XPIProvider = {
       if (!REQUIRE_SIGNING)
         Services.prefs.addObserver(PREF_XPI_SIGNATURES_REQUIRED, this, false);
       Services.obs.addObserver(this, NOTIFICATION_FLUSH_PERMISSIONS, false);
-      if (Cu.isModuleLoaded("resource:///modules/devtools/ToolboxProcess.jsm")) {
+      if (Cu.isModuleLoaded("resource:///modules/devtools/client/framework/ToolboxProcess.jsm")) {
         // If BrowserToolboxProcess is already loaded, set the boolean to true
         // and do whatever is needed
         this._toolboxProcessLoaded = true;
@@ -2791,11 +2808,19 @@ this.XPIProvider = {
                                !XPIDatabase.writeAddonsList());
   },
 
-  updateSystemAddons: Task.async(function XPI_updateSystemAddons() {
+  updateSystemAddons: Task.async(function* XPI_updateSystemAddons() {
+    let systemAddonLocation = XPIProvider.installLocationsByName[KEY_APP_SYSTEM_ADDONS];
+    if (!systemAddonLocation)
+      return;
+
+    // Don't do anything in safe mode
+    if (Services.appinfo.inSafeMode)
+      return;
+
     // Download the list of system add-ons
     let url = Preferences.get(PREF_SYSTEM_ADDON_UPDATE_URL, null);
     if (!url)
-      return;
+      return systemAddonLocation.cleanDirectories();
 
     url = UpdateUtils.formatUpdateURL(url);
 
@@ -2805,7 +2830,7 @@ this.XPIProvider = {
     // If there was no list then do nothing.
     if (!addonList) {
       logger.info("No system add-ons list was returned.");
-      return;
+      return systemAddonLocation.cleanDirectories();
     }
 
     addonList = new Map([for (spec of addonList) [spec.id, { spec, path: null, addon: null }]]);
@@ -2832,13 +2857,11 @@ this.XPIProvider = {
       return true;
     };
 
-    let systemAddonLocation = XPIProvider.installLocationsByName[KEY_APP_SYSTEM_ADDONS];
-
     // If this matches the current set in the profile location then do nothing.
     let updatedAddons = addonMap(yield getAddonsInLocation(KEY_APP_SYSTEM_ADDONS));
     if (setMatches(addonList, updatedAddons)) {
       logger.info("Retaining existing updated system add-ons.");
-      return;
+      return systemAddonLocation.cleanDirectories();
     }
 
     // If this matches the current set in the default location then reset the
@@ -2847,7 +2870,7 @@ this.XPIProvider = {
     if (setMatches(addonList, defaultAddons)) {
       logger.info("Resetting system add-ons.");
       systemAddonLocation.resetAddonSet();
-      return;
+      return systemAddonLocation.cleanDirectories();
     }
 
     // Download all the add-ons
@@ -2930,6 +2953,8 @@ this.XPIProvider = {
           }
         }
       }
+
+      yield systemAddonLocation.cleanDirectories();
     }
   }),
 
@@ -4171,16 +4196,20 @@ this.XPIProvider = {
    *         The type for the add-on
    * @param  aMultiprocessCompatible
    *         Boolean indicating whether the add-on is compatible with electrolysis.
+   * @param  aRunInSafeMode
+   *         Boolean indicating whether the add-on can run in safe mode.
    * @return a JavaScript scope
    */
   loadBootstrapScope: function XPI_loadBootstrapScope(aId, aFile, aVersion, aType,
-                                                      aMultiprocessCompatible) {
+                                                      aMultiprocessCompatible,
+                                                      aRunInSafeMode) {
     // Mark the add-on as active for the crash reporter before loading
     this.bootstrappedAddons[aId] = {
       version: aVersion,
       type: aType,
       descriptor: aFile.persistentDescriptor,
-      multiprocessCompatible: aMultiprocessCompatible
+      multiprocessCompatible: aMultiprocessCompatible,
+      runInSafeMode: aRunInSafeMode,
     };
     this.persistBootstrappedAddons();
     this.addAddonsToCrashReporter();
@@ -4301,14 +4330,15 @@ this.XPIProvider = {
    *         the params argument
    */
   callBootstrapMethod: function XPI_callBootstrapMethod(aAddon, aFile, aMethod, aReason, aExtraParams) {
-    // Never call any bootstrap methods in safe mode
-    if (Services.appinfo.inSafeMode)
-      return;
-
     if (!aAddon.id || !aAddon.version || !aAddon.type) {
       logger.error(new Error("aAddon must include an id, version, and type"));
       return;
     }
+
+    // Only run in safe mode if allowed to
+    let runInSafeMode = "runInSafeMode" in aAddon ? aAddon.runInSafeMode : canRunInSafeMode(aAddon);
+    if (Services.appinfo.inSafeMode && !runInSafeMode)
+      return;
 
     let timeStart = new Date();
     if (CHROME_TYPES.has(aAddon.type) && aMethod == "startup") {
@@ -4318,9 +4348,11 @@ this.XPIProvider = {
 
     try {
       // Load the scope if it hasn't already been loaded
-      if (!(aAddon.id in this.bootstrapScopes))
+      if (!(aAddon.id in this.bootstrapScopes)) {
         this.loadBootstrapScope(aAddon.id, aFile, aAddon.version, aAddon.type,
-                                aAddon.multiprocessCompatible || false);
+                                aAddon.multiprocessCompatible || false,
+                                runInSafeMode);
+      }
 
       // Nothing to call for locales
       if (aAddon.type == "locale")
@@ -6814,9 +6846,11 @@ function AddonWrapper(aAddon) {
   });
 
   this.__defineGetter__("isActive", function AddonWrapper_isActiveGetter() {
-    if (Services.appinfo.inSafeMode)
+    if (!aAddon.active)
       return false;
-    return aAddon.active;
+    if (!Services.appinfo.inSafeMode)
+      return true;
+    return aAddon.bootstrap && canRunInSafeMode(aAddon);
   });
 
   this.__defineGetter__("userDisabled", function AddonWrapper_userDisabledGetter() {
@@ -7476,6 +7510,7 @@ Object.assign(MutableDirectoryInstallLocation.prototype, {
  */
 function SystemAddonInstallLocation(aName, aDirectory, aScope, aResetSet) {
   this._baseDir = aDirectory;
+  this._nextDir = null;
 
   if (aResetSet)
     this.resetAddonSet();
@@ -7525,6 +7560,10 @@ Object.assign(SystemAddonInstallLocation.prototype, {
   },
 
   getAddonLocations: function() {
+    // Updated system add-ons are ignored in safe mode
+    if (Services.appinfo.inSafeMode)
+      return new Map();
+
     let addons = DirectoryInstallLocation.prototype.getAddonLocations.call(this);
 
     // Strip out any unexpected add-ons from the list
@@ -7593,6 +7632,58 @@ Object.assign(SystemAddonInstallLocation.prototype, {
   },
 
   /**
+   * Removes any directories not currently in use or pending use after a
+   * restart. Any errors that happen here don't really matter as we'll attempt
+   * to cleanup again next time.
+   */
+  cleanDirectories: Task.async(function*() {
+    let iterator;
+    try {
+      iterator = new OS.File.DirectoryIterator(this._baseDir.path);
+    }
+    catch (e) {
+      logger.error("Failed to clean updated system add-ons directories.", e);
+      return;
+    }
+
+    try {
+      let entries = [];
+
+      yield iterator.forEach(entry => {
+        // Skip the directory currently in use
+        if (this._directory && this._directory.path == entry.path)
+          return;
+
+        // Skip the next directory
+        if (this._nextDir && this._nextDir.path == entry.path)
+          return;
+
+        entries.push(entry);
+      });
+
+      for (let entry of entries) {
+        if (entry.isDir) {
+          yield OS.File.removeDir(entry.path, {
+            ignoreAbsent: true,
+            ignorePermissions: true,
+          });
+        }
+        else {
+          yield OS.File.remove(entry.path, {
+            ignoreAbsent: true,
+          });
+        }
+      }
+    }
+    catch (e) {
+      logger.error("Failed to clean updated system add-ons directories.", e);
+    }
+    finally {
+      iterator.close();
+    }
+  }),
+
+  /**
    * Installs a new set of system add-ons into the location and updates the
    * add-on set in prefs. We wait to switch state until a restart.
    */
@@ -7653,6 +7744,7 @@ Object.assign(SystemAddonInstallLocation.prototype, {
     }
 
     this._saveAddonSet(state);
+    this._nextDir = newDir;
   }),
 });
 

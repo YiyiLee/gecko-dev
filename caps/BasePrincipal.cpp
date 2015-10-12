@@ -120,10 +120,10 @@ public:
   {
     if (aName.EqualsLiteral("appId")) {
       nsresult rv;
-      mOriginAttributes->mAppId = aValue.ToInteger(&rv);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return false;
-      }
+      int64_t val  = aValue.ToInteger64(&rv);
+      NS_ENSURE_SUCCESS(rv, false);
+      NS_ENSURE_TRUE(val <= UINT32_MAX, false);
+      mOriginAttributes->mAppId = static_cast<uint32_t>(val);
 
       return true;
     }
@@ -145,10 +145,10 @@ public:
 
     if (aName.EqualsLiteral("userContextId")) {
       nsresult rv;
-      mOriginAttributes->mUserContextId = aValue.ToInteger(&rv);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return false;
-      }
+      int64_t val  = aValue.ToInteger64(&rv);
+      NS_ENSURE_SUCCESS(rv, false);
+      NS_ENSURE_TRUE(val <= UINT32_MAX, false);
+      mOriginAttributes->mUserContextId  = static_cast<uint32_t>(val);
 
       return true;
     }
@@ -270,6 +270,44 @@ BasePrincipal::SubsumesConsideringDomain(nsIPrincipal *aOther, bool *aResult)
 }
 
 NS_IMETHODIMP
+BasePrincipal::CheckMayLoad(nsIURI* aURI, bool aReport, bool aAllowIfInheritsPrincipal)
+{
+  // Check the internal method first, which allows us to quickly approve loads
+  // for the System Principal.
+  if (MayLoadInternal(aURI)) {
+    return NS_OK;
+  }
+
+  nsresult rv;
+  if (aAllowIfInheritsPrincipal) {
+    // If the caller specified to allow loads of URIs that inherit
+    // our principal, allow the load if this URI inherits its principal.
+    bool doesInheritSecurityContext;
+    rv = NS_URIChainHasFlags(aURI, nsIProtocolHandler::URI_INHERITS_SECURITY_CONTEXT,
+                             &doesInheritSecurityContext);
+    if (NS_SUCCEEDED(rv) && doesInheritSecurityContext) {
+      return NS_OK;
+    }
+  }
+
+  bool fetchableByAnyone;
+  rv = NS_URIChainHasFlags(aURI, nsIProtocolHandler::URI_FETCHABLE_BY_ANYONE, &fetchableByAnyone);
+  if (NS_SUCCEEDED(rv) && fetchableByAnyone) {
+    return NS_OK;
+  }
+
+  if (aReport) {
+    nsCOMPtr<nsIURI> prinURI;
+    rv = GetURI(getter_AddRefs(prinURI));
+    if (NS_SUCCEEDED(rv) && prinURI) {
+      nsScriptSecurityManager::ReportError(nullptr, NS_LITERAL_STRING("CheckSameOriginError"), prinURI, aURI);
+    }
+  }
+
+  return NS_ERROR_DOM_BAD_URI;
+}
+
+NS_IMETHODIMP
 BasePrincipal::GetCsp(nsIContentSecurityPolicy** aCsp)
 {
   NS_IF_ADDREF(*aCsp = mCSP);
@@ -379,7 +417,7 @@ BasePrincipal::GetUnknownAppId(bool* aUnknownAppId)
 }
 
 already_AddRefed<BasePrincipal>
-BasePrincipal::CreateCodebasePrincipal(nsIURI* aURI, OriginAttributes& aAttrs)
+BasePrincipal::CreateCodebasePrincipal(nsIURI* aURI, const OriginAttributes& aAttrs)
 {
   // If the URI is supposed to inherit the security context of whoever loads it,
   // we shouldn't make a codebase principal for it.

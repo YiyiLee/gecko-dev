@@ -68,6 +68,7 @@
     _(InitPropGetterSetter)         \
     _(CheckOverRecursed)            \
     _(DefVar)                       \
+    _(DefLexical)                   \
     _(DefFun)                       \
     _(CallKnown)                    \
     _(CallGeneric)                  \
@@ -364,8 +365,10 @@
     _(AssertResultT)                \
     _(LexicalCheck)                 \
     _(ThrowUninitializedLexical)    \
+    _(GlobalNameConflictsCheck)     \
     _(Debugger)                     \
     _(NewTarget)                    \
-    _(ArrowNewTarget)
+    _(ArrowNewTarget)               \
+    _(CheckReturn)
 
 #endif /* jit_shared_LOpcodes_shared_h */

@@ -39,11 +39,16 @@ class nsIDocShell;
 
 namespace mozilla {
 
+namespace a11y {
+class DocAccessibleParent;
+}
+
 namespace jsipc {
 class CpowHolder;
 } // namespace jsipc
 
 namespace layers {
+class AsyncDragMetrics;
 struct FrameMetrics;
 struct TextureFactoryIdentifier;
 } // namespace layers
@@ -83,6 +88,7 @@ class TabParent final : public PBrowserParent
                       , public nsIWebBrowserPersistable
 {
     typedef mozilla::dom::ClonedMessageData ClonedMessageData;
+    typedef mozilla::layers::AsyncDragMetrics AsyncDragMetrics;
 
     virtual ~TabParent();
 
@@ -243,6 +249,7 @@ public:
     virtual bool RecvDispatchWheelEvent(const mozilla::WidgetWheelEvent& aEvent) override;
     virtual bool RecvDispatchMouseEvent(const mozilla::WidgetMouseEvent& aEvent) override;
     virtual bool RecvDispatchKeyboardEvent(const mozilla::WidgetKeyboardEvent& aEvent) override;
+    virtual bool RecvStartScrollbarDrag(const AsyncDragMetrics& aDragMetrics) override;
 
     virtual PColorPickerParent*
     AllocPColorPickerParent(const nsString& aTitle, const nsString& aInitialColor) override;
@@ -255,6 +262,11 @@ public:
     RecvPDocAccessibleConstructor(PDocAccessibleParent* aDoc,
                                   PDocAccessibleParent* aParentDoc,
                                   const uint64_t& aParentID) override;
+
+    /**
+     * Return the top level doc accessible parent for this tab.
+     */
+    a11y::DocAccessibleParent* GetTopLevelDocAccessible() const;
 
     void LoadURL(nsIURI* aURI);
     // XXX/cjones: it's not clear what we gain by hiding these
@@ -442,6 +454,10 @@ public:
                                int32_t& aDragAreaX, int32_t& aDragAreaY);
     layout::RenderFrameParent* GetRenderFrame();
 
+    // Called by HttpChannelParent. The function may use a new process to
+    // reload the URI associated with the given channel.
+    void OnStartSignedPackageRequest(nsIChannel* aChannel);
+
 protected:
     bool ReceiveMessage(const nsString& aMessage,
                         bool aSync,
@@ -481,6 +497,10 @@ protected:
                                   BrowserConfiguration& aConfiguration);
 
     void SetHasContentOpener(bool aHasContentOpener);
+
+    // Decide whether we have to use a new process to reload the URI associated
+    // with the given channel.
+    bool ShouldSwitchProcess(nsIChannel* aChannel);
 
     ContentCacheInParent mContentCache;
 

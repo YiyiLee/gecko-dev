@@ -59,16 +59,6 @@ function whenDelayedStartupFinished(aWindow, aCallback) {
   }, "browser-delayed-startup-finished", false);
 }
 
-function findChromeWindowByURI(aURI) {
-  let windows = Services.wm.getEnumerator(null);
-  while (windows.hasMoreElements()) {
-    let win = windows.getNext();
-    if (win.location.href == aURI)
-      return win;
-  }
-  return null;
-}
-
 function updateTabContextMenu(tab) {
   let menu = document.getElementById("tabContextMenu");
   if (!tab)
@@ -896,6 +886,13 @@ function assertMixedContentBlockingState(tabbrowser, states = {}) {
       is(securityContentBG, "url(\"chrome://browser/skin/controlcenter/conn-degraded.svg\")",
         "CC using degraded icon");
     }
+  }
+
+  if (activeLoaded || activeBlocked || passiveLoaded) {
+    doc.getElementById("identity-popup-security-expander").click();
+    is(Array.filter(doc.querySelectorAll("[observes=identity-popup-mcb-learn-more]"),
+                    element => !is_hidden(element)).length, 1,
+       "The 'Learn more' link should be visible once.");
   }
 
   gIdentityHandler._identityPopup.hidden = true;

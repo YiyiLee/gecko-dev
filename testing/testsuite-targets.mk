@@ -173,7 +173,7 @@ RUN_REFTEST = rm -f ./$@.log && $(PYTHON) _tests/reftest/runreftest.py \
 REMOTE_REFTEST = rm -f ./$@.log && $(PYTHON) _tests/reftest/remotereftest.py \
   --dm_trans=$(DM_TRANS) --ignore-window-size \
   --app=$(TEST_PACKAGE_NAME) --deviceIP=${TEST_DEVICE} --xre-path=${MOZ_HOST_BIN} \
-  --httpd-path=_tests/modules \
+  --httpd-path=_tests/modules --suite reftest \
   $(SYMBOLS_PATH) $(EXTRA_TEST_ARGS) $(1) | tee ./$@.log
 
 RUN_REFTEST_B2G = rm -f ./$@.log && $(PYTHON) _tests/reftest/runreftestb2g.py \
@@ -422,12 +422,6 @@ package-tests-prepare-dest:
 	@rm -f '$(DIST)/$(PKG_PATH)$(TEST_PACKAGE)'
 	$(NSINSTALL) -D $(DIST)/$(PKG_PATH)
 
-package-tests-mozharness: package-tests-prepare-dest
-	$(call py_action,test_archive, \
-		mozharness \
-		$(abspath $(DIST))/$(PKG_PATH)/mozharness.zip)
-package-tests: package-tests-mozharness
-
 define package_archive
 package-tests-$(1): stage-all package-tests-prepare-dest
 	$$(call py_action,test_archive, \
@@ -565,7 +559,6 @@ stage-instrumentation-tests: make-stage-dir
   jstestbrowser \
   package-tests \
   package-tests-prepare-dest \
-  package-tests-mozharness \
   package-tests-common \
   make-stage-dir \
   stage-all \

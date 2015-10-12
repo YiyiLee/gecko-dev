@@ -353,7 +353,6 @@ MediaDecoder::MediaDecoder() :
   mDormantSupported(false),
   mLogicalPosition(0.0),
   mDuration(std::numeric_limits<double>::quiet_NaN()),
-  mReentrantMonitor("media.decoder"),
 #ifdef MOZ_EME
   mCDMProxyPromise(mCDMProxyPromiseHolder.Ensure(__func__)),
 #endif
@@ -1267,11 +1266,6 @@ MediaDecoder::SetStateMachine(MediaDecoderStateMachine* aStateMachine)
     mCurrentPosition.DisconnectIfConnected();
     mPlaybackPosition.DisconnectIfConnected();
   }
-}
-
-ReentrantMonitor&
-MediaDecoder::GetReentrantMonitor() {
-  return mReentrantMonitor;
 }
 
 ImageContainer*

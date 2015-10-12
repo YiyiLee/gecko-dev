@@ -8,10 +8,10 @@
 
 window.performance.mark('gecko-settings-loadstart');
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
-const Cu = Components.utils;
-const Cr = Components.results;
+var Cc = Components.classes;
+var Ci = Components.interfaces;
+var Cu = Components.utils;
+var Cr = Components.results;
 
 // The load order is important here SettingsRequestManager _must_ be loaded
 // prior to using SettingsListener otherwise there is a race in acquiring the
@@ -313,30 +313,48 @@ setUpdateTrackingId();
   // modify them, that's where we need to make our changes.
   let defaultBranch = Services.prefs.getDefaultBranch(null);
 
-  function syncCharPref(prefName) {
-    SettingsListener.observe(prefName, null, function(value) {
-      // If set, propagate setting value to pref.
-      if (value) {
-        defaultBranch.setCharPref(prefName, value);
+  function syncPrefDefault(prefName) {
+    // The pref value at boot-time will serve as default for the setting.
+    let defaultValue = defaultBranch.getCharPref(prefName);
+    let defaultSetting = {};
+    defaultSetting[prefName] = defaultValue;
+
+    // We back up that value in order to detect pref changes across reboots.
+    // Such a change can happen e.g. when the user installs an OTA update that
+    // changes the update URL format.
+    let backupName = prefName + '.old';
+    try {
+      // Everything relies on the comparison below: When pushing a new Gecko
+      // that changes app.update.url or app.update.channel, we overwrite any
+      // existing setting with the new pref value.
+      let backupValue = Services.prefs.getCharPref(backupName);
+      if (defaultValue !== backupValue) {
+        // If the pref has changed since our last backup, overwrite the setting.
+        navigator.mozSettings.createLock().set(defaultSetting);
+      }
+    } catch(e) {
+      // There was no backup: Overwrite the setting and create a backup below.
+      navigator.mozSettings.createLock().set(defaultSetting);
+    }
+
+    // Initialize or update the backup value.
+    Services.prefs.setCharPref(backupName, defaultValue);
+
+    // Propagate setting changes to the pref.
+    SettingsListener.observe(prefName, defaultValue, value => {
+      if (!value) {
+        // If the setting value is invalid, reset it to its default.
+        navigator.mozSettings.createLock().set(defaultSetting);
         return;
       }
-      // If unset, initialize setting to pref value.
-      try {
-        let value = defaultBranch.getCharPref(prefName);
-        if (value) {
-          let setting = {};
-          setting[prefName] = value;
-          window.navigator.mozSettings.createLock().set(setting);
-        }
-      } catch(e) {
-        console.log('Unable to read pref ' + prefName + ': ' + e);
-      }
+      // Here we will overwrite the pref with the setting value.
+      defaultBranch.setCharPref(prefName, value);
     });
   }
 
-  syncCharPref(AppConstants.MOZ_B2GDROID ? 'app.update.url.android'
-                                         : 'app.update.url');
-  syncCharPref('app.update.channel');
+  syncPrefDefault(AppConstants.MOZ_B2GDROID ? 'app.update.url.android'
+                                            : 'app.update.url');
+  syncPrefDefault('app.update.channel');
 })();
 
 // ================ Debug ================
@@ -637,14 +655,23 @@ var settingsToObserve = {
   'layers.draw-borders': false,
   'layers.draw-tile-borders': false,
   'layers.dump': false,
+#ifdef XP_WIN
+  'layers.enable-tiles': false,
+#else
   'layers.enable-tiles': true,
+#endif
   'layers.effect.invert': false,
   'layers.effect.grayscale': false,
   'layers.effect.contrast': '0.0',
+#ifdef MOZ_GRAPHENE
+  // Restart required
+  'layers.async-pan-zoom.enabled': false,
+#endif
   'layout.display-list.dump': false,
   'mms.debugging.enabled': false,
   'network.debugging.enabled': false,
   'privacy.donottrackheader.enabled': false,
+  'privacy.trackingprotection.enabled': false,
   'ril.debugging.enabled': false,
   'ril.radio.disabled': false,
   'ril.mms.requestReadReport.enabled': {

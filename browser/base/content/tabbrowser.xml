@@ -1233,6 +1233,8 @@
                 this._adjustFocusAfterTabSwitch(this.mCurrentTab);
             }
 
+            updateUserContextUIIndicator(gBrowser.selectedBrowser);
+
             this.tabContainer._setPositionalAttributes();
 
             if (!gMultiProcessBrowser) {
@@ -1799,6 +1801,8 @@
 
             var uriIsAboutBlank = !aURI || aURI == "about:blank";
 
+            if (aUserContextId)
+              t.setAttribute("usercontextid", aUserContextId);
             t.setAttribute("crop", "end");
             t.setAttribute("onerror", "this.removeAttribute('image');");
             t.className = "tabbrowser-tab";
@@ -1839,7 +1843,10 @@
 
             // If we open a new tab with the newtab URL in the default
             // userContext, check if there is a preloaded browser ready.
-            if (aURI == BROWSER_NEW_TAB_URL && !aUserContextId) {
+            // Private windows are not included because both the label and the
+            // icon for the tab would be set incorrectly (see bug 1195981).
+            if (aURI == BROWSER_NEW_TAB_URL && !aUserContextId &&
+                !PrivateBrowsingUtils.isWindowPrivate(window)) {
               b = this._getPreloadedBrowser();
               usingPreloadedContent = !!b;
             }
@@ -2518,6 +2525,10 @@
             if (aOtherTab.hasAttribute("soundplaying")) {
               aOurTab.setAttribute("soundplaying", "true");
               modifiedAttrs.push("soundplaying");
+            }
+            if (aOtherTab.hasAttribute("usercontextid")) {
+              aOurTab.setAttribute("usercontextid", aOtherTab.getAttribute("usercontextid"));
+              modifiedAttrs.push("usercontextid");
             }
 
             // If the other tab is pending (i.e. has not been restored, yet)
@@ -5328,13 +5339,11 @@
       ]]></handler>
 
       <handler event="dblclick"><![CDATA[
-        if (gBrowser.AppConstants.platform != "macosx") {
-          // When the tabbar has an unified appearance with the titlebar
-          // and menubar, a double-click in it should have the same behavior
-          // as double-clicking the titlebar
-          if (TabsInTitlebar.enabled || this.parentNode._dragBindingAlive)
-            return;
-        }
+        // When the tabbar has an unified appearance with the titlebar
+        // and menubar, a double-click in it should have the same behavior
+        // as double-clicking the titlebar
+        if (TabsInTitlebar.enabled || this.parentNode._dragBindingAlive)
+          return;
 
         if (event.button != 0 ||
             event.originalTarget.localName != "box")

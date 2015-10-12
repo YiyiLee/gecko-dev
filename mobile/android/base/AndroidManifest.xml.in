@@ -13,7 +13,7 @@
 #ifdef MOZ_ANDROID_MAX_SDK_VERSION
               android:maxSdkVersion="@MOZ_ANDROID_MAX_SDK_VERSION@"
 #endif
-              android:targetSdkVersion="@ANDROID_TARGET_SDK@"/>
+              android:targetSdkVersion="22"/>
 
 #include ../services/manifests/FxAccountAndroidManifest_permissions.xml.in
 #include ../services/manifests/HealthReportAndroidManifest_permissions.xml.in
@@ -47,6 +47,8 @@
     <uses-permission android:name="android.permission.RECEIVE_SMS"/>
     <uses-permission android:name="android.permission.WRITE_SMS"/>
     <uses-permission android:name="android.permission.READ_SMS"/>
+
+    <uses-feature android:name="android.hardware.telephony"/>
 #endif
 
     <uses-feature android:name="android.hardware.location" android:required="false"/>
@@ -381,9 +383,12 @@
         </receiver>
 
         <service android:name="org.mozilla.gecko.Restarter"
-                  android:exported="false"
-                  android:process="@MANGLED_ANDROID_PACKAGE_NAME@.Restarter">
+                 android:exported="false"
+                 android:process="@MANGLED_ANDROID_PACKAGE_NAME@.Restarter">
         </service>
+
+        <receiver android:name="org.mozilla.gecko.AlarmReceiver" >
+        </receiver>
 
 #include ../services/manifests/FxAccountAndroidManifest_activities.xml.in
 #include ../services/manifests/HealthReportAndroidManifest_activities.xml.in

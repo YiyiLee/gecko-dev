@@ -76,18 +76,12 @@ const LayersPacket_Layer_ScrollingDirect LayersPacket_Layer_ScrollingDirect_Scro
 const int LayersPacket_Layer_ScrollingDirect_ScrollingDirect_ARRAYSIZE = LayersPacket_Layer_ScrollingDirect_ScrollingDirect_MAX + 1;
 
 enum LayersPacket_Layer_Filter {
-  LayersPacket_Layer_Filter_FILTER_FAST = 0,
-  LayersPacket_Layer_Filter_FILTER_GOOD = 1,
-  LayersPacket_Layer_Filter_FILTER_BEST = 2,
-  LayersPacket_Layer_Filter_FILTER_NEAREST = 3,
-  LayersPacket_Layer_Filter_FILTER_BILINEAR = 4,
-  LayersPacket_Layer_Filter_FILTER_GAUSSIAN = 5,
-  LayersPacket_Layer_Filter_FILTER_SENTINEL = 6
+  LayersPacket_Layer_Filter_FILTER_GOOD = 0,
+  LayersPacket_Layer_Filter_FILTER_LINEAR = 1,
+  LayersPacket_Layer_Filter_FILTER_POINT = 2,
+  LayersPacket_Layer_Filter_FILTER_SENTINEL = 3
 };
 bool LayersPacket_Layer_Filter_IsValid(int value);
-const LayersPacket_Layer_Filter LayersPacket_Layer_Filter_Filter_MIN = LayersPacket_Layer_Filter_FILTER_FAST;
-const LayersPacket_Layer_Filter LayersPacket_Layer_Filter_Filter_MAX = LayersPacket_Layer_Filter_FILTER_SENTINEL;
-const int LayersPacket_Layer_Filter_Filter_ARRAYSIZE = LayersPacket_Layer_Filter_Filter_MAX + 1;
 
 enum Packet_DataType {
   Packet_DataType_FRAMESTART = 1,
@@ -466,6 +460,13 @@ class TexturePacket : public ::google::protobuf::MessageLite {
   inline ::std::string* release_data();
   inline void set_allocated_data(::std::string* data);
 
+  // optional bool isMask = 20;
+  inline bool has_ismask() const;
+  inline void clear_ismask();
+  static const int kIsMaskFieldNumber = 20;
+  inline bool ismask() const;
+  inline void set_ismask(bool value);
+
   // @@protoc_insertion_point(class_scope:mozilla.layers.layerscope.TexturePacket)
  private:
   inline void set_has_layerref();
@@ -486,6 +487,8 @@ class TexturePacket : public ::google::protobuf::MessageLite {
   inline void clear_has_glcontext();
   inline void set_has_data();
   inline void clear_has_data();
+  inline void set_has_ismask();
+  inline void clear_has_ismask();
 
   ::std::string _unknown_fields_;
 
@@ -500,6 +503,7 @@ class TexturePacket : public ::google::protobuf::MessageLite {
   ::google::protobuf::uint32 dataformat_;
   ::google::protobuf::uint64 glcontext_;
   ::std::string* data_;
+  bool ismask_;
   #ifdef GOOGLE_PROTOBUF_NO_STATIC_INITIALIZER
   friend void  protobuf_AddDesc_LayerScopePacket_2eproto_impl();
   #else
@@ -1159,22 +1163,13 @@ class LayersPacket_Layer : public ::google::protobuf::MessageLite {
     LayersPacket_Layer_ScrollingDirect_ScrollingDirect_ARRAYSIZE;
 
   typedef LayersPacket_Layer_Filter Filter;
-  static const Filter FILTER_FAST = LayersPacket_Layer_Filter_FILTER_FAST;
   static const Filter FILTER_GOOD = LayersPacket_Layer_Filter_FILTER_GOOD;
-  static const Filter FILTER_BEST = LayersPacket_Layer_Filter_FILTER_BEST;
-  static const Filter FILTER_NEAREST = LayersPacket_Layer_Filter_FILTER_NEAREST;
-  static const Filter FILTER_BILINEAR = LayersPacket_Layer_Filter_FILTER_BILINEAR;
-  static const Filter FILTER_GAUSSIAN = LayersPacket_Layer_Filter_FILTER_GAUSSIAN;
+  static const Filter FILTER_LINEAR = LayersPacket_Layer_Filter_FILTER_LINEAR;
+  static const Filter FILTER_POINT = LayersPacket_Layer_Filter_FILTER_POINT;
   static const Filter FILTER_SENTINEL = LayersPacket_Layer_Filter_FILTER_SENTINEL;
   static inline bool Filter_IsValid(int value) {
     return LayersPacket_Layer_Filter_IsValid(value);
   }
-  static const Filter Filter_MIN =
-    LayersPacket_Layer_Filter_Filter_MIN;
-  static const Filter Filter_MAX =
-    LayersPacket_Layer_Filter_Filter_MAX;
-  static const int Filter_ARRAYSIZE =
-    LayersPacket_Layer_Filter_Filter_ARRAYSIZE;
 
   // accessors -------------------------------------------------------
 
@@ -2677,6 +2672,30 @@ inline void TexturePacket::set_allocated_data(::std::string* data) {
     data_ = const_cast< ::std::string*>(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
   }
   // @@protoc_insertion_point(field_set_allocated:mozilla.layers.layerscope.TexturePacket.data)
+}
+
+// optional bool isMask = 20;
+inline bool TexturePacket::has_ismask() const {
+  return (_has_bits_[0] & 0x00000200u) != 0;
+}
+inline void TexturePacket::set_has_ismask() {
+  _has_bits_[0] |= 0x00000200u;
+}
+inline void TexturePacket::clear_has_ismask() {
+  _has_bits_[0] &= ~0x00000200u;
+}
+inline void TexturePacket::clear_ismask() {
+  ismask_ = false;
+  clear_has_ismask();
+}
+inline bool TexturePacket::ismask() const {
+  // @@protoc_insertion_point(field_get:mozilla.layers.layerscope.TexturePacket.isMask)
+  return ismask_;
+}
+inline void TexturePacket::set_ismask(bool value) {
+  set_has_ismask();
+  ismask_ = value;
+  // @@protoc_insertion_point(field_set:mozilla.layers.layerscope.TexturePacket.isMask)
 }
 
 // -------------------------------------------------------------------

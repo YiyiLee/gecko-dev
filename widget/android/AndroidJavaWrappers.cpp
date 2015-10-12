@@ -70,7 +70,6 @@ jfieldID AndroidGeckoEvent::jGamepadButtonField = 0;
 jfieldID AndroidGeckoEvent::jGamepadButtonPressedField = 0;
 jfieldID AndroidGeckoEvent::jGamepadButtonValueField = 0;
 jfieldID AndroidGeckoEvent::jGamepadValuesField = 0;
-jfieldID AndroidGeckoEvent::jObjectField = 0;
 
 jclass AndroidPoint::jPointClass = 0;
 jfieldID AndroidPoint::jXField = 0;
@@ -178,7 +177,6 @@ AndroidGeckoEvent::InitGeckoEventClass(JNIEnv *jEnv)
     jGamepadButtonPressedField = geckoEvent.getField("mGamepadButtonPressed", "Z");
     jGamepadButtonValueField = geckoEvent.getField("mGamepadButtonValue", "F");
     jGamepadValuesField = geckoEvent.getField("mGamepadValues", "[F");
-    jObjectField = geckoEvent.getField("mObject", "Ljava/lang/Object;");
 }
 
 void
@@ -473,13 +471,6 @@ AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
              mMetaState = jenv->GetIntField(jobj, jMetaStateField);
              break;
 
-        case PROCESS_OBJECT: {
-            const jobject obj = jenv->GetObjectField(jobj, jObjectField);
-            mObject.Init(obj, jenv);
-            jenv->DeleteLocalRef(obj);
-            break;
-        }
-
         case LOCATION_EVENT: {
             jobject location = jenv->GetObjectField(jobj, jLocationField);
             mGeoPosition = AndroidLocation::CreateGeoPosition(jenv, location);
@@ -562,6 +553,7 @@ AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
 
         case TELEMETRY_HISTOGRAM_ADD: {
             ReadCharactersField(jenv);
+            ReadCharactersExtraField(jenv);
             mCount = jenv->GetIntField(jobj, jCountField);
             break;
         }

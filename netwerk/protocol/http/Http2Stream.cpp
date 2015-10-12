@@ -324,8 +324,20 @@ Http2Stream::WriteSegments(nsAHttpSegmentWriter *writer,
     // won't block other streams. but we should not advance the flow control window
     // so that we'll eventually push back on the sender.
 
+    // with tunnels you need to make sure that this is an underlying connction established
+    // that can be meaningfully giving this signal
+    bool doBuffer = true;
+    if (mIsTunnel) {
+      nsRefPtr<SpdyConnectTransaction> qiTrans(mTransaction->QuerySpdyConnectTransaction());
+      if (qiTrans) {
+        doBuffer = qiTrans->ConnectedReadyForInput();
+      }
+    }
     // stash this data
-    rv = BufferInput(count, countWritten);
+    if (doBuffer) {
+      rv = BufferInput(count, countWritten);
+      LOG3(("Http2Stream::WriteSegments %p Buffered %X %d\n", this, rv, *countWritten));
+    }
   }
   mSegmentWriter = nullptr;
   return rv;
@@ -994,7 +1006,7 @@ Http2Stream::ConvertResponseHeaders(Http2Decompressor *decompressor,
                                     aHeadersOut, false);
   if (NS_FAILED(rv)) {
     LOG3(("Http2Stream::ConvertResponseHeaders %p decode Error\n", this));
-    return NS_ERROR_ILLEGAL_VALUE;
+    return rv;
   }
 
   nsAutoCString statusString;
@@ -1055,7 +1067,7 @@ Http2Stream::ConvertPushHeaders(Http2Decompressor *decompressor,
                                     aHeadersOut, true);
   if (NS_FAILED(rv)) {
     LOG3(("Http2Stream::ConvertPushHeaders %p Error\n", this));
-    return NS_ERROR_ILLEGAL_VALUE;
+    return rv;
   }
 
   nsCString method;

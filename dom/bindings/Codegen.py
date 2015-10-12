@@ -2222,7 +2222,14 @@ class MethodDefiner(PropertyDefiner):
             return (any("@@iterator" in m.aliases for m in methods) or
                     any("@@iterator" == r["name"] for r in regular))
 
-        if (any(m.isGetter() and m.isIndexed() for m in methods)):
+        # Check whether we need to output an @@iterator due to having an indexed
+        # getter.  We only do this while outputting non-static and
+        # non-unforgeable methods, since the @@iterator function will be
+        # neither.
+        if (not static and
+            not unforgeable and
+            descriptor.supportsIndexedProperties() and
+            isMaybeExposedIn(descriptor.operations['IndexedGetter'], descriptor)):
             if hasIterator(methods, self.regular):
                 raise TypeError("Cannot have indexed getter/attr on "
                                 "interface %s with other members "
@@ -2689,6 +2696,26 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
         # if we don't need to create anything, why are we generating this?
         assert needInterfaceObject or needInterfacePrototypeObject
 
+        getParentProto = fill(
+            """
+            JS::${type}<JSObject*> parentProto(${getParentProto});
+            if (!parentProto) {
+              return;
+            }
+            """,
+            type=parentProtoType,
+            getParentProto=getParentProto)
+
+        getConstructorProto = fill(
+            """
+            JS::${type}<JSObject*> constructorProto(${getConstructorProto});
+            if (!constructorProto) {
+              return;
+            }
+            """,
+            type=constructorProtoType,
+            getConstructorProto=getConstructorProto)
+
         idsToInit = []
         # There is no need to init any IDs in bindings that don't want Xrays.
         if self.descriptor.wantsXrays:
@@ -2727,75 +2754,6 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
                                   post="}\n")
         else:
             prefCache = None
-
-        if self.descriptor.hasUnforgeableMembers:
-            assert needInterfacePrototypeObject
-            # We want to use the same JSClass and prototype as the object we'll
-            # end up defining the unforgeable properties on in the end, so that
-            # we can use JS_InitializePropertiesFromCompatibleNativeObject to do
-            # a fast copy.  In the case of proxies that's null, because the
-            # expando object is a vanilla object, but in the case of other DOM
-            # objects it's whatever our class is.
-            #
-            # Also, for a global we can't use the global's class; just use
-            # nullpr and when we do the copy off the holder we'll take a slower
-            # path.  This also means that we don't need to worry about matching
-            # the prototype.
-            if self.descriptor.proxy or self.descriptor.isGlobal():
-                holderClass = "nullptr"
-                holderProto = "nullptr"
-            else:
-                holderClass = "Class.ToJSClass()"
-                holderProto = "*protoCache"
-            failureCode = dedent(
-                """
-                *protoCache = nullptr;
-                if (interfaceCache) {
-                  *interfaceCache = nullptr;
-                }
-                return;
-                """)
-            createUnforgeableHolder = CGGeneric(fill(
-                """
-                JS::Rooted<JSObject*> unforgeableHolder(aCx);
-                {
-                  JS::Rooted<JSObject*> holderProto(aCx, ${holderProto});
-                  unforgeableHolder = JS_NewObjectWithoutMetadata(aCx, ${holderClass}, holderProto);
-                  if (!unforgeableHolder) {
-                    $*{failureCode}
-                  }
-                }
-                """,
-                holderProto=holderProto,
-                holderClass=holderClass,
-                failureCode=failureCode))
-            defineUnforgeables = InitUnforgeablePropertiesOnHolder(self.descriptor,
-                                                                   self.properties,
-                                                                   failureCode)
-            createUnforgeableHolder = CGList(
-                [createUnforgeableHolder, defineUnforgeables])
-        else:
-            createUnforgeableHolder = None
-
-        getParentProto = fill(
-            """
-            JS::${type}<JSObject*> parentProto(${getParentProto});
-            if (!parentProto) {
-              return;
-            }
-            """,
-            type=parentProtoType,
-            getParentProto=getParentProto)
-
-        getConstructorProto = fill(
-            """
-            JS::${type}<JSObject*> constructorProto(${getConstructorProto});
-            if (!constructorProto) {
-              return;
-            }
-            """,
-            type=constructorProtoType,
-            getConstructorProto=getConstructorProto)
 
         if (needInterfaceObject and
             self.descriptor.needsConstructHookHolder()):
@@ -2869,17 +2827,18 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
             chromeProperties=chromeProperties,
             name='"' + self.descriptor.interface.identifier.name + '"' if needInterfaceObject else "nullptr")
 
-        if self.descriptor.hasUnforgeableMembers:
-            assert needInterfacePrototypeObject
-            setUnforgeableHolder = CGGeneric(dedent(
-                """
-                if (*protoCache) {
-                  js::SetReservedSlot(*protoCache, DOM_INTERFACE_PROTO_SLOTS_BASE,
-                                      JS::ObjectValue(*unforgeableHolder));
-                }
-                """))
-        else:
-            setUnforgeableHolder = None
+        # If we fail after here, we must clear interface and prototype caches
+        # using this code: intermediate failure must not expose the interface in
+        # partially-constructed state.  Note that every case after here needs an
+        # interface prototype object.
+        failureCode = dedent(
+            """
+            *protoCache = nullptr;
+            if (interfaceCache) {
+              *interfaceCache = nullptr;
+            }
+            return;
+            """)
 
         aliasedMembers = [m for m in self.descriptor.interface.members if m.isMethod() and m.aliases]
         if aliasedMembers:
@@ -2900,17 +2859,18 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
                     prop = '"%s"' % alias
                 return CGList([
                     getSymbolJSID,
-                    # XXX If we ever create non-enumerate properties that can be
-                    #     aliased, we should consider making the aliases match
-                    #     the enumerability of the property being aliased.
+                    # XXX If we ever create non-enumerable properties that can
+                    #     be aliased, we should consider making the aliases
+                    #     match the enumerability of the property being aliased.
                     CGGeneric(fill(
                         """
                         if (!${defineFn}(aCx, proto, ${prop}, aliasedVal, JSPROP_ENUMERATE)) {
-                          return;
+                          $*{failureCode}
                         }
                         """,
                         defineFn=defineFn,
-                        prop=prop))
+                        prop=prop,
+                        failureCode=failureCode))
                 ], "\n")
 
             def defineAliasesFor(m):
@@ -2918,29 +2878,84 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
                     CGGeneric(fill(
                         """
                         if (!JS_GetProperty(aCx, proto, \"${prop}\", &aliasedVal)) {
-                          return;
+                          $*{failureCode}
                         }
                         """,
+                        failureCode=failureCode,
                         prop=m.identifier.name))
                 ] + [defineAlias(alias) for alias in sorted(m.aliases)])
 
             defineAliases = CGList([
-                CGGeneric(dedent("""
+                CGGeneric(fill("""
                     // Set up aliases on the interface prototype object we just created.
                     JS::Handle<JSObject*> proto = GetProtoObjectHandle(aCx, aGlobal);
                     if (!proto) {
-                      return;
+                      $*{failureCode}
                     }
 
-                    """)),
+                    """,
+                    failureCode=failureCode)),
                 CGGeneric("JS::Rooted<JS::Value> aliasedVal(aCx);\n\n")
             ] + [defineAliasesFor(m) for m in sorted(aliasedMembers)])
         else:
             defineAliases = None
 
+        if self.descriptor.hasUnforgeableMembers:
+            assert needInterfacePrototypeObject
+
+            # We want to use the same JSClass and prototype as the object we'll
+            # end up defining the unforgeable properties on in the end, so that
+            # we can use JS_InitializePropertiesFromCompatibleNativeObject to do
+            # a fast copy.  In the case of proxies that's null, because the
+            # expando object is a vanilla object, but in the case of other DOM
+            # objects it's whatever our class is.
+            #
+            # Also, for a global we can't use the global's class; just use
+            # nullpr and when we do the copy off the holder we'll take a slower
+            # path.  This also means that we don't need to worry about matching
+            # the prototype.
+            if self.descriptor.proxy or self.descriptor.isGlobal():
+                holderClass = "nullptr"
+                holderProto = "nullptr"
+            else:
+                holderClass = "Class.ToJSClass()"
+                holderProto = "*protoCache"
+            createUnforgeableHolder = CGGeneric(fill(
+                """
+                JS::Rooted<JSObject*> unforgeableHolder(aCx);
+                {
+                  JS::Rooted<JSObject*> holderProto(aCx, ${holderProto});
+                  unforgeableHolder = JS_NewObjectWithoutMetadata(aCx, ${holderClass}, holderProto);
+                  if (!unforgeableHolder) {
+                    $*{failureCode}
+                  }
+                }
+                """,
+                holderProto=holderProto,
+                holderClass=holderClass,
+                failureCode=failureCode))
+            defineUnforgeables = InitUnforgeablePropertiesOnHolder(self.descriptor,
+                                                                   self.properties,
+                                                                   failureCode)
+            createUnforgeableHolder = CGList(
+                [createUnforgeableHolder, defineUnforgeables])
+
+            installUnforgeableHolder = CGGeneric(dedent(
+                """
+                if (*protoCache) {
+                  js::SetReservedSlot(*protoCache, DOM_INTERFACE_PROTO_SLOTS_BASE,
+                                      JS::ObjectValue(*unforgeableHolder));
+                }
+                """))
+
+            unforgeableHolderSetup = CGList(
+                [createUnforgeableHolder, installUnforgeableHolder], "\n")
+        else:
+            unforgeableHolderSetup = None
+
         return CGList(
             [getParentProto, CGGeneric(getConstructorProto), initIds,
-             prefCache, CGGeneric(call), defineAliases, createUnforgeableHolder, setUnforgeableHolder],
+             prefCache, CGGeneric(call), defineAliases, unforgeableHolderSetup],
             "\n").define()
 
 

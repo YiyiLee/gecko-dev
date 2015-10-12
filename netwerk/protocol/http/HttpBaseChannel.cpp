@@ -77,7 +77,6 @@ HttpBaseChannel::HttpBaseChannel()
   , mResponseTimeoutEnabled(true)
   , mAllRedirectsSameOrigin(true)
   , mAllRedirectsPassTimingAllowCheck(true)
-  , mForceNoIntercept(false)
   , mResponseCouldBeSynthesized(false)
   , mSuspendCount(0)
   , mInitialRwin(0)
@@ -94,6 +93,7 @@ HttpBaseChannel::HttpBaseChannel()
   , mOnStartRequestCalled(false)
   , mRequireCORSPreflight(false)
   , mWithCredentials(false)
+  , mForceMainDocumentChannel(false)
 {
   LOG(("Creating HttpBaseChannel @%x\n", this));
 
@@ -268,6 +268,7 @@ NS_IMETHODIMP
 HttpBaseChannel::SetLoadFlags(nsLoadFlags aLoadFlags)
 {
   mLoadFlags = aLoadFlags;
+  mForceMainDocumentChannel = (aLoadFlags & LOAD_DOCUMENT_URI);
   return NS_OK;
 }
 
@@ -772,6 +773,52 @@ HttpBaseChannel::DoApplyContentConversions(nsIStreamListener* aNextListener,
                                    mListenerContext);
 }
 
+// create a listener chain that looks like this
+// http-channel -> decompressor (n times) -> InterceptFailedOnSTop -> channel-creator-listener
+//
+// we need to do this because not every decompressor has fully streamed output so
+// may need a call to OnStopRequest to identify its completion state.. and if it
+// creates an error there the channel status code needs to be updated before calling
+// the terminal listener. Having the decompress do it via cancel() means channels cannot
+// effectively be used in two contexts (specifically this one and a peek context for
+// sniffing)
+//
+class InterceptFailedOnStop : public nsIStreamListener
+{
+  virtual ~InterceptFailedOnStop() {}
+  nsCOMPtr<nsIStreamListener> mNext;
+  HttpBaseChannel *mChannel;
+
+public:
+  InterceptFailedOnStop(nsIStreamListener *arg, HttpBaseChannel *chan)
+  : mNext(arg)
+  , mChannel(chan) {}
+  NS_DECL_ISUPPORTS
+
+  NS_IMETHODIMP OnStartRequest(nsIRequest *aRequest, nsISupports *aContext) override
+  {
+    return mNext->OnStartRequest(aRequest, aContext);
+  }
+
+  NS_IMETHODIMP OnStopRequest(nsIRequest *aRequest, nsISupports *aContext, nsresult aStatusCode) override
+  {
+    if (NS_FAILED(aStatusCode) && NS_SUCCEEDED(mChannel->mStatus)) {
+      LOG(("HttpBaseChannel::InterceptFailedOnStop %p seting status %x", mChannel, aStatusCode));
+      mChannel->mStatus = aStatusCode;
+    }
+    return mNext->OnStopRequest(aRequest, aContext, aStatusCode);
+  }
+
+  NS_IMETHODIMP OnDataAvailable(nsIRequest *aRequest, nsISupports *aContext,
+                           nsIInputStream *aInputStream, uint64_t aOffset,
+                           uint32_t aCount) override
+  {
+    return mNext->OnDataAvailable(aRequest, aContext, aInputStream, aOffset, aCount);
+  }
+};
+
+NS_IMPL_ISUPPORTS(InterceptFailedOnStop, nsIStreamListener, nsIRequestObserver)
+
 NS_IMETHODIMP
 HttpBaseChannel::DoApplyContentConversions(nsIStreamListener* aNextListener,
                                            nsIStreamListener** aNewNextListener,
@@ -781,8 +828,6 @@ HttpBaseChannel::DoApplyContentConversions(nsIStreamListener* aNextListener,
   if (!mResponseHead || ! aNextListener) {
     return NS_OK;
   }
-
-  nsCOMPtr<nsIStreamListener> nextListener = aNextListener;
 
   LOG(("HttpBaseChannel::DoApplyContentConversions [this=%p]\n", this));
 
@@ -795,6 +840,8 @@ HttpBaseChannel::DoApplyContentConversions(nsIStreamListener* aNextListener,
   nsresult rv = mResponseHead->GetHeader(nsHttp::Content_Encoding, contentEncoding);
   if (NS_FAILED(rv) || contentEncoding.IsEmpty())
     return NS_OK;
+
+  nsCOMPtr<nsIStreamListener> nextListener = new InterceptFailedOnStop(aNextListener, this);
 
   // The encodings are listed in the order they were applied
   // (see rfc 2616 section 14.11), so they need to removed in reverse
@@ -847,7 +894,7 @@ HttpBaseChannel::DoApplyContentConversions(nsIStreamListener* aNextListener,
           mode = 1;
         } else if (from.Equals("deflate") || from.Equals("x-deflate")) {
           mode = 2;
-        } else if (from.Equals("brotli")) {
+        } else if (from.Equals("br")) {
           mode = 3;
         }
         Telemetry::Accumulate(Telemetry::HTTP_CONTENT_ENCODING, mode);
@@ -958,7 +1005,7 @@ HttpBaseChannel::nsContentEncodings::GetNext(nsACString& aNextEncoding)
 
   if (!haveType) {
     encoding.BeginReading(start);
-    if (CaseInsensitiveFindInReadable(NS_LITERAL_CSTRING("brotli"), start, end)) {
+    if (CaseInsensitiveFindInReadable(NS_LITERAL_CSTRING("br"), start, end)) {
       aNextEncoding.AssignLiteral(APPLICATION_BROTLI);
       haveType = true;
     }
@@ -1570,6 +1617,8 @@ HttpBaseChannel::OverrideSecurityInfo(nsISupports* aSecurityInfo)
              "This can only be called when we don't have a security info object already");
   MOZ_RELEASE_ASSERT(aSecurityInfo,
                      "This can only be called with a valid security info object");
+  MOZ_ASSERT(!BypassServiceWorker(),
+             "This can only be called on channels that are not bypassing interception");
   MOZ_ASSERT(mResponseCouldBeSynthesized,
              "This can only be called on channels that can be intercepted");
   if (mSecurityInfo) {
@@ -1584,28 +1633,6 @@ HttpBaseChannel::OverrideSecurityInfo(nsISupports* aSecurityInfo)
   }
 
   mSecurityInfo = aSecurityInfo;
-  return NS_OK;
-}
-
-nsresult
-HttpBaseChannel::OverrideURI(nsIURI* aRedirectedURI)
-{
-  MOZ_ASSERT(mLoadFlags & LOAD_REPLACE,
-             "This can only happen if the LOAD_REPLACE flag is set");
-  MOZ_ASSERT(ShouldIntercept(),
-             "This can only be called on channels that can be intercepted");
-  if (!(mLoadFlags & LOAD_REPLACE)) {
-    LOG(("HttpBaseChannel::OverrideURI LOAD_REPLACE flag not set! [this=%p]\n",
-         this));
-    return NS_ERROR_UNEXPECTED;
-  }
-  if (!mResponseCouldBeSynthesized) {
-    LOG(("HttpBaseChannel::OverrideURI channel cannot be intercepted! "
-         "[this=%p]\n", this));
-    return NS_ERROR_UNEXPECTED;
-  }
-
-  mURI = aRedirectedURI;
   return NS_OK;
 }
 
@@ -1690,6 +1717,21 @@ NS_IMETHODIMP
 HttpBaseChannel::SetSchedulingContextID(const nsID aSCID)
 {
   mSchedulingContextID = aSCID;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+HttpBaseChannel::GetIsMainDocumentChannel(bool* aValue)
+{
+  NS_ENSURE_ARG_POINTER(aValue);
+  *aValue = mForceMainDocumentChannel || (mLoadFlags & LOAD_DOCUMENT_URI);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+HttpBaseChannel::SetIsMainDocumentChannel(bool aValue)
+{
+  mForceMainDocumentChannel = aValue;
   return NS_OK;
 }
 
@@ -2119,14 +2161,6 @@ HttpBaseChannel::GetLastModifiedTime(PRTime* lastModifiedTime)
 }
 
 NS_IMETHODIMP
-HttpBaseChannel::ForceNoIntercept()
-{
-  mForceNoIntercept = true;
-  mResponseCouldBeSynthesized = false;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 HttpBaseChannel::GetCorsIncludeCredentials(bool* aInclude)
 {
   *aInclude = mCorsIncludeCredentials;
@@ -2263,7 +2297,13 @@ HttpBaseChannel::GetURIPrincipal()
 bool
 HttpBaseChannel::IsNavigation()
 {
-  return mLoadFlags & LOAD_DOCUMENT_URI;
+  return mForceMainDocumentChannel;
+}
+
+bool
+HttpBaseChannel::BypassServiceWorker() const
+{
+  return mLoadFlags & LOAD_BYPASS_SERVICE_WORKER;
 }
 
 bool
@@ -2272,7 +2312,7 @@ HttpBaseChannel::ShouldIntercept()
   nsCOMPtr<nsINetworkInterceptController> controller;
   GetCallback(controller);
   bool shouldIntercept = false;
-  if (controller && !mForceNoIntercept && mLoadInfo) {
+  if (controller && !BypassServiceWorker() && mLoadInfo) {
     nsContentPolicyType type = mLoadInfo->InternalContentPolicyType();
     nsresult rv = controller->ShouldPrepareForIntercept(mURI,
                                                         IsNavigation(),
@@ -2552,11 +2592,6 @@ HttpBaseChannel::SetupReplacementChannel(nsIURI       *newURI,
         LOG(("HttpBaseChannel::SetupReplacementChannel "
              "[this=%p] transferring chain of redirect cache-keys", this));
         httpInternal->SetCacheKeysRedirectChain(mRedirectedCachekeys.forget());
-    }
-
-    // Preserve any skip-serviceworker-flag.
-    if (mForceNoIntercept) {
-      httpInternal->ForceNoIntercept();
     }
 
     // Preserve CORS mode flag.

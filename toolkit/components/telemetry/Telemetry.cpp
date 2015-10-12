@@ -2188,7 +2188,7 @@ TelemetryImpl::UnregisterAddonHistograms(const nsACString &id)
     // will be deleted if and when the addon registers histograms with
     // the same names.
     delete addonEntry->mData;
-    mAddonMap.RemoveEntry(id);
+    mAddonMap.RemoveEntry(addonEntry);
   }
 
   return NS_OK;
@@ -3722,6 +3722,19 @@ Accumulate(const char* name, uint32_t sample)
   if (NS_SUCCEEDED(rv)) {
     HistogramAdd(*h, sample, gHistograms[id].dataset);
   }
+}
+
+void
+Accumulate(const char *name, const nsCString& key, uint32_t sample)
+{
+    if (!TelemetryImpl::CanRecordBase()) {
+      return;
+    }
+    ID id;
+    nsresult rv = TelemetryImpl::GetHistogramEnumId(name, &id);
+    if (NS_SUCCEEDED(rv)) {
+      Accumulate(id, key, sample);
+    }
 }
 
 void

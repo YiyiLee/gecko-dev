@@ -31,9 +31,6 @@ MediaOmxCommonDecoder::MediaOmxCommonDecoder()
   , mIsCaptured(false)
 {
   mDormantSupported = true;
-  if (!gMediaDecoderLog) {
-    gMediaDecoderLog = PR_NewLogModule("MediaDecoder");
-  }
 }
 
 MediaOmxCommonDecoder::~MediaOmxCommonDecoder() {}
@@ -41,13 +38,38 @@ MediaOmxCommonDecoder::~MediaOmxCommonDecoder() {}
 void
 MediaOmxCommonDecoder::SetPlatformCanOffloadAudio(bool aCanOffloadAudio)
 {
-  ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
-  mCanOffloadAudio = aCanOffloadAudio;
+  if (!aCanOffloadAudio) {
+    return;
+  }
+
+  // Stop MDSM from playing to avoid startup glitch (bug 1053186).
+  GetStateMachine()->DispatchAudioOffloading(true);
+
+  // Modify mCanOffloadAudio in the main thread.
+  nsRefPtr<MediaOmxCommonDecoder> self = this;
+  nsCOMPtr<nsIRunnable> r = NS_NewRunnableFunction([=] () {
+    self->mCanOffloadAudio = true;
+  });
+  AbstractThread::MainThread()->Dispatch(r.forget());
+}
+
+void
+MediaOmxCommonDecoder::DisableStateMachineAudioOffloading()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  if (mCanOffloadAudio) {
+    // mCanOffloadAudio is true implies we've called
+    // |GetStateMachine()->DispatchAudioOffloading(true)| in
+    // SetPlatformCanOffloadAudio(). We need to turn off audio offloading
+    // for MDSM so it can start playback.
+    GetStateMachine()->DispatchAudioOffloading(false);
+  }
 }
 
 bool
 MediaOmxCommonDecoder::CheckDecoderCanOffloadAudio()
 {
+  MOZ_ASSERT(NS_IsMainThread());
   return (mCanOffloadAudio && !mFallbackToStateMachine &&
           !mIsCaptured && mPlaybackRate == 1.0);
 }
@@ -64,10 +86,10 @@ MediaOmxCommonDecoder::FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo,
 
   MediaDecoder::FirstFrameLoaded(aInfo, aEventVisibility);
 
-  ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
   if (!CheckDecoderCanOffloadAudio()) {
     DECODER_LOG(LogLevel::Debug, ("In %s Offload Audio check failed",
         __PRETTY_FUNCTION__));
+    DisableStateMachineAudioOffloading();
     return;
   }
 
@@ -75,6 +97,7 @@ MediaOmxCommonDecoder::FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo,
   mAudioOffloadPlayer = new AudioOffloadPlayer(this);
 #endif
   if (!mAudioOffloadPlayer) {
+    DisableStateMachineAudioOffloading();
     return;
   }
 
@@ -85,6 +108,7 @@ MediaOmxCommonDecoder::FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo,
     mFallbackToStateMachine = true;
     DECODER_LOG(LogLevel::Debug, ("In %s Unable to start offload audio %d."
       "Switching to normal mode", __PRETTY_FUNCTION__, err));
+    DisableStateMachineAudioOffloading();
     return;
   }
   PauseStateMachine();
@@ -105,7 +129,6 @@ void
 MediaOmxCommonDecoder::PauseStateMachine()
 {
   MOZ_ASSERT(NS_IsMainThread());
-  GetReentrantMonitor().AssertCurrentThreadIn();
   DECODER_LOG(LogLevel::Debug, ("%s", __PRETTY_FUNCTION__));
 
   if (mShuttingDown) {
@@ -123,7 +146,6 @@ void
 MediaOmxCommonDecoder::ResumeStateMachine()
 {
   MOZ_ASSERT(NS_IsMainThread());
-  ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
   DECODER_LOG(LogLevel::Debug, ("%s current time %f", __PRETTY_FUNCTION__, mLogicalPosition));
 
   if (mShuttingDown) {
@@ -133,6 +155,8 @@ MediaOmxCommonDecoder::ResumeStateMachine()
   if (!GetStateMachine()) {
     return;
   }
+
+  GetStateMachine()->DispatchAudioOffloading(false);
 
   mFallbackToStateMachine = true;
   mAudioOffloadPlayer = nullptr;
@@ -231,8 +255,6 @@ MediaOmxCommonDecoder::CurrentPosition()
   if (!mAudioOffloadPlayer) {
     return MediaDecoder::CurrentPosition();
   }
-
-  ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
   return mAudioOffloadPlayer->GetMediaTimeUs();
 }
 
